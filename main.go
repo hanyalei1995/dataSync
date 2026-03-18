@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"html/template"
 	"log"
-	"net/http"
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
@@ -31,10 +30,23 @@ func main() {
 	dsHandler := &handler.DataSourceHandler{Service: dsSvc}
 
 	taskSvc := &service.TaskService{DB: db}
+	executor := &service.Executor{
+		DB:      db,
+		DSSvc:   dsSvc,
+		TaskSvc: taskSvc,
+	}
+	scheduler := service.NewScheduler(db, executor)
+	scheduler.Start()
+	defer scheduler.Stop()
+
 	taskHandler := &handler.TaskHandler{
 		TaskService:       taskSvc,
 		DataSourceService: dsSvc,
+		Executor:          executor,
+		Scheduler:         scheduler,
 	}
+	logHandler := &handler.LogHandler{DB: db}
+	dashboardHandler := &handler.DashboardHandler{DB: db}
 
 	r := gin.Default()
 
@@ -62,12 +74,7 @@ func main() {
 	// Protected routes
 	protected := r.Group("/", middleware.AuthMiddleware(cfg.JWTSecret))
 	{
-		protected.GET("/", func(c *gin.Context) {
-			username, _ := c.Get("username")
-			c.HTML(http.StatusOK, "dashboard", gin.H{
-				"username": username,
-			})
-		})
+		protected.GET("/", dashboardHandler.Index)
 		protected.GET("/logout", authHandler.Logout)
 
 		// Datasource routes
@@ -86,6 +93,11 @@ func main() {
 		protected.GET("/tasks/:id/edit", taskHandler.EditForm)
 		protected.POST("/tasks/:id", taskHandler.Update)
 		protected.POST("/tasks/:id/delete", taskHandler.Delete)
+		protected.POST("/tasks/:id/run", taskHandler.Run)
+		protected.POST("/tasks/:id/stop", taskHandler.Stop)
+
+		// Log routes
+		protected.GET("/logs", logHandler.List)
 	}
 
 	// API routes
@@ -98,6 +110,7 @@ func main() {
 		// Task API routes
 		api.GET("/tasks/:id/mappings", taskHandler.Mappings)
 		api.PUT("/tasks/:id/mappings", taskHandler.SaveMappings)
+		api.GET("/tasks/:id/logs", logHandler.TaskLogs)
 	}
 
 	fmt.Printf("DataSync server starting on :%d\n", cfg.Port)

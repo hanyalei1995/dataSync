@@ -4,14 +4,124 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DataSync - Dashboard</title>
+    <title>DataSync - 仪表盘</title>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 min-h-screen">
-<div class="p-8">
-    <h1 class="text-2xl font-bold text-gray-800">Welcome, {{.username}}</h1>
-    <p class="text-gray-500 mt-2">DataSync Dashboard — coming soon</p>
+<nav class="bg-white shadow">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+        <a href="/" class="text-xl font-bold text-indigo-600">DataSync</a>
+        <div class="flex items-center gap-6">
+            <a href="/" class="text-sm font-medium text-indigo-600">仪表盘</a>
+            <a href="/datasources" class="text-sm text-gray-600 hover:text-indigo-600">数据源</a>
+            <a href="/tasks" class="text-sm text-gray-600 hover:text-indigo-600">同步任务</a>
+            <a href="/logs" class="text-sm text-gray-600 hover:text-indigo-600">执行日志</a>
+            <span class="text-gray-400">|</span>
+            <span class="text-gray-600 text-sm">{{.username}}</span>
+            <a href="/logout" class="text-sm text-red-500 hover:underline">登出</a>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <h1 class="text-2xl font-bold text-gray-800 mb-6">仪表盘</h1>
+
+    <!-- Stat Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="bg-white rounded-xl shadow p-6 flex items-center gap-4">
+            <div class="flex-shrink-0 w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path>
+                </svg>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">数据源</p>
+                <p class="text-2xl font-bold text-gray-800">{{.dsCount}}</p>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-6 flex items-center gap-4">
+            <div class="flex-shrink-0 w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">同步任务</p>
+                <p class="text-2xl font-bold text-gray-800">{{.taskCount}}</p>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-6 flex items-center gap-4">
+            <div class="flex-shrink-0 w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
+                <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">运行中</p>
+                <p class="text-2xl font-bold text-gray-800">{{.runningCount}}</p>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-6 flex items-center gap-4">
+            <div class="flex-shrink-0 w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                </svg>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">今日执行</p>
+                <p class="text-2xl font-bold text-gray-800">{{.todayCount}}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Sync Logs -->
+    <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-800">最近执行记录</h2>
+        </div>
+        <div id="recent-logs" hx-trigger="every 5s" hx-get="/" hx-select="#recent-logs" hx-target="#recent-logs" hx-swap="outerHTML">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">任务名称</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">开始时间</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">结束时间</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">同步行数</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                    {{range .recentLogs}}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-4 text-sm font-medium text-gray-900">{{.TaskName}}</td>
+                        <td class="px-6 py-4 text-sm text-gray-600">{{.StartTime.Format "2006-01-02 15:04:05"}}</td>
+                        <td class="px-6 py-4 text-sm text-gray-600">{{if .EndTime}}{{.EndTime.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}</td>
+                        <td class="px-6 py-4 text-sm">
+                            {{if eq .Status "success"}}
+                            <span class="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">成功</span>
+                            {{else if eq .Status "failed"}}
+                            <span class="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">失败</span>
+                            {{else if eq .Status "running"}}
+                            <span class="px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">运行中</span>
+                            {{else}}
+                            <span class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">{{.Status}}</span>
+                            {{end}}
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-600">{{.RowsSynced}}</td>
+                    </tr>
+                    {{else}}
+                    <tr>
+                        <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-400">暂无执行记录</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
 </body>
 </html>
