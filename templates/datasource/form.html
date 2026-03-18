@@ -1,0 +1,125 @@
+{{define "datasource_form"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataSync - 数据源表单</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+<nav class="bg-white shadow">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+        <a href="/" class="text-xl font-bold text-indigo-600">DataSync</a>
+        <div class="flex items-center gap-4">
+            <span class="text-gray-600">{{.username}}</span>
+            <a href="/logout" class="text-sm text-red-500 hover:underline">退出</a>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-2xl mx-auto px-4 py-8">
+    <div class="flex items-center mb-6">
+        <a href="/datasources" class="text-indigo-600 hover:underline mr-4">← 返回</a>
+        <h1 class="text-2xl font-bold text-gray-800">{{if .datasource}}编辑数据源{{else}}新增数据源{{end}}</h1>
+    </div>
+
+    {{if .error}}
+    <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">{{.error}}</div>
+    {{end}}
+
+    <div class="bg-white rounded-xl shadow p-6">
+        <form id="ds-form" method="POST" action="{{if .datasource}}/datasources/{{.datasource.ID}}{{else}}/datasources{{end}}" class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">名称</label>
+                <input type="text" name="name" value="{{if .datasource}}{{.datasource.Name}}{{end}}" required
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">数据库类型</label>
+                <select name="db_type" id="db_type" required
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                    <option value="">请选择</option>
+                    <option value="mysql" {{if and .datasource (eq .datasource.DBType "mysql")}}selected{{end}}>MySQL</option>
+                    <option value="postgresql" {{if and .datasource (eq .datasource.DBType "postgresql")}}selected{{end}}>PostgreSQL</option>
+                    <option value="oracle" {{if and .datasource (eq .datasource.DBType "oracle")}}selected{{end}}>Oracle</option>
+                </select>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">主机</label>
+                    <input type="text" name="host" value="{{if .datasource}}{{.datasource.Host}}{{end}}" required
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">端口</label>
+                    <input type="number" name="port" value="{{if .datasource}}{{.datasource.Port}}{{end}}" required
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+                    <input type="text" name="username" value="{{if .datasource}}{{.datasource.Username}}{{end}}" required
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">密码</label>
+                    <input type="password" name="password" value="{{if .datasource}}{{.datasource.Password}}{{end}}" required
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">数据库名</label>
+                <input type="text" name="database_name" value="{{if .datasource}}{{.datasource.DatabaseName}}{{end}}" required
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">额外参数</label>
+                <input type="text" name="extra_params" value="{{if .datasource}}{{.datasource.ExtraParams}}{{end}}"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="可选">
+            </div>
+
+            <div class="flex items-center gap-4 pt-4">
+                <button type="submit" class="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition">保存</button>
+                <button type="button" id="test-btn" class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition">测试连接</button>
+                <span id="test-result" class="text-sm"></span>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+document.getElementById('test-btn').addEventListener('click', function() {
+    var form = document.getElementById('ds-form');
+    var formData = new FormData(form);
+    var resultEl = document.getElementById('test-result');
+    resultEl.innerHTML = '<span class="text-gray-500">测试中...</span>';
+
+    fetch('/api/datasources/test', {
+        method: 'POST',
+        body: formData
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            resultEl.innerHTML = '<span class="text-green-600">' + data.message + '</span>';
+        } else {
+            resultEl.innerHTML = '<span class="text-red-600">' + data.message + '</span>';
+        }
+    })
+    .catch(function(err) {
+        resultEl.innerHTML = '<span class="text-red-600">请求失败</span>';
+    });
+});
+</script>
+</body>
+</html>
+{{end}}

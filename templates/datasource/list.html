@@ -1,0 +1,97 @@
+{{define "datasource_list"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataSync - 数据源管理</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+<nav class="bg-white shadow">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+        <a href="/" class="text-xl font-bold text-indigo-600">DataSync</a>
+        <div class="flex items-center gap-4">
+            <span class="text-gray-600">{{.username}}</span>
+            <a href="/logout" class="text-sm text-red-500 hover:underline">退出</a>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">数据源管理</h1>
+        <a href="/datasources/new" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition">新增</a>
+    </div>
+
+    {{if .error}}
+    <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">{{.error}}</div>
+    {{end}}
+
+    <div class="bg-white rounded-xl shadow overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">名称</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">类型</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">主机</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">端口</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">数据库</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200">
+                {{range .datasources}}
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 text-sm font-medium text-gray-900">{{.Name}}</td>
+                    <td class="px-6 py-4 text-sm text-gray-600">
+                        <span class="px-2 py-1 rounded-full text-xs font-medium
+                            {{if eq .DBType "mysql"}}bg-blue-100 text-blue-800
+                            {{else if eq .DBType "postgresql"}}bg-green-100 text-green-800
+                            {{else}}bg-orange-100 text-orange-800{{end}}">{{.DBType}}</span>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-600">{{.Host}}</td>
+                    <td class="px-6 py-4 text-sm text-gray-600">{{.Port}}</td>
+                    <td class="px-6 py-4 text-sm text-gray-600">{{.DatabaseName}}</td>
+                    <td class="px-6 py-4 text-sm space-x-2">
+                        <a href="/datasources/{{.ID}}/edit" class="text-indigo-600 hover:underline">编辑</a>
+                        <form method="POST" action="/datasources/{{.ID}}/delete" class="inline" onsubmit="return confirm('确定删除？')">
+                            <button type="submit" class="text-red-600 hover:underline">删除</button>
+                        </form>
+                        <button class="text-green-600 hover:underline"
+                            hx-post="/api/datasources/test"
+                            hx-vals='{"db_type":"{{.DBType}}","host":"{{.Host}}","port":"{{.Port}}","username":"{{.Username}}","password":"{{.Password}}","database_name":"{{.DatabaseName}}"}'
+                            hx-target="#test-result-{{.ID}}"
+                            hx-swap="innerHTML">测试</button>
+                        <span id="test-result-{{.ID}}" class="text-xs ml-2"></span>
+                    </td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="6" class="px-6 py-8 text-center text-gray-400">暂无数据源，点击右上角新增</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+document.body.addEventListener('htmx:afterRequest', function(evt) {
+    if (evt.detail.xhr && evt.detail.xhr.responseText) {
+        try {
+            var resp = JSON.parse(evt.detail.xhr.responseText);
+            var target = evt.detail.target;
+            if (resp.success) {
+                target.innerHTML = '<span class="text-green-600">' + resp.message + '</span>';
+            } else {
+                target.innerHTML = '<span class="text-red-600">' + resp.message + '</span>';
+            }
+        } catch(e) {}
+    }
+});
+</script>
+</body>
+</html>
+{{end}}
