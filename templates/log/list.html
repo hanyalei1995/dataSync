@@ -1,0 +1,88 @@
+{{define "log_list"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataSync - 执行日志</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+<nav class="bg-white shadow">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+        <a href="/" class="text-xl font-bold text-indigo-600">DataSync</a>
+        <div class="flex items-center gap-6">
+            <a href="/" class="text-sm text-gray-600 hover:text-indigo-600">仪表盘</a>
+            <a href="/datasources" class="text-sm text-gray-600 hover:text-indigo-600">数据源</a>
+            <a href="/tasks" class="text-sm text-gray-600 hover:text-indigo-600">同步任务</a>
+            <a href="/logs" class="text-sm text-indigo-600 font-medium">执行日志</a>
+            <span class="text-gray-400">|</span>
+            <span class="text-gray-600 text-sm">{{.username}}</span>
+            <a href="/logout" class="text-sm text-red-500 hover:underline">登出</a>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">执行日志</h1>
+    </div>
+
+    <div class="mb-4 flex items-center gap-3">
+        <form method="GET" action="/logs" class="flex items-center gap-3">
+            <label class="text-sm text-gray-600">状态筛选:</label>
+            <select name="status" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="" {{if eq .currentStatus ""}}>全部</option>
+                <option value="running" {{if eq .currentStatus "running"}}selected{{end}}>运行中</option>
+                <option value="success" {{if eq .currentStatus "success"}}selected{{end}}>成功</option>
+                <option value="failed" {{if eq .currentStatus "failed"}}selected{{end}}>失败</option>
+            </select>
+            <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 transition">筛选</button>
+        </form>
+    </div>
+
+    <div class="bg-white rounded-xl shadow overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">任务名称</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">开始时间</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">结束时间</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">同步行数</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">错误信息</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200">
+                {{range .logs}}
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 text-sm text-gray-900">{{.ID}}</td>
+                    <td class="px-6 py-4 text-sm font-medium text-gray-900">{{.TaskName}}</td>
+                    <td class="px-6 py-4 text-sm text-gray-600">{{.StartTime.Format "2006-01-02 15:04:05"}}</td>
+                    <td class="px-6 py-4 text-sm text-gray-600">
+                        {{if .EndTime}}{{.EndTime.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}
+                    </td>
+                    <td class="px-6 py-4 text-sm">
+                        <span class="px-2 py-1 rounded-full text-xs font-medium
+                            {{if eq .Status "success"}}bg-green-100 text-green-800
+                            {{else if eq .Status "failed"}}bg-red-100 text-red-800
+                            {{else if eq .Status "running"}}bg-yellow-100 text-yellow-800
+                            {{else}}bg-gray-100 text-gray-800{{end}}">{{.Status}}</span>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-600">{{.RowsSynced}}</td>
+                    <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate" title="{{.ErrorMsg}}">{{.ErrorMsg}}</td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="7" class="px-6 py-8 text-center text-gray-400">暂无执行日志</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+</body>
+</html>
+{{end}}
