@@ -14,9 +14,7 @@ type AuthHandler struct {
 }
 
 func (h *AuthHandler) LoginPage(c *gin.Context) {
-	c.HTML(http.StatusOK, "login.html", gin.H{
-		"error": "",
-	})
+	c.HTML(http.StatusOK, "login", gin.H{})
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -25,7 +23,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	user, err := h.UserService.Authenticate(username, password)
 	if err != nil {
-		c.HTML(http.StatusOK, "login.html", gin.H{
+		c.HTML(http.StatusOK, "login", gin.H{
 			"error": "Invalid username or password",
 		})
 		return
@@ -33,7 +31,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	token, err := middleware.GenerateToken(h.JWTSecret, user.ID, user.Username)
 	if err != nil {
-		c.HTML(http.StatusInternalServerError, "login.html", gin.H{
+		c.HTML(http.StatusInternalServerError, "login", gin.H{
 			"error": "Internal server error",
 		})
 		return

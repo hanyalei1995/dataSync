@@ -42,7 +42,7 @@ func main() {
 	{
 		protected.GET("/", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			c.HTML(http.StatusOK, "login.html", gin.H{
+			c.HTML(http.StatusOK, "dashboard", gin.H{
 				"username": username,
 			})
 		})
