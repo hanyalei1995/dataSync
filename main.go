@@ -7,8 +7,10 @@ import (
 	"datasync/internal/middleware"
 	"datasync/internal/service"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,8 +30,25 @@ func main() {
 	dsSvc := &service.DataSourceService{DB: db}
 	dsHandler := &handler.DataSourceHandler{Service: dsSvc}
 
+	taskSvc := &service.TaskService{DB: db}
+	taskHandler := &handler.TaskHandler{
+		TaskService:       taskSvc,
+		DataSourceService: dsSvc,
+	}
+
 	r := gin.Default()
-	r.LoadHTMLGlob("templates/**/*.html")
+
+	// Register custom template functions and load templates
+	funcMap := template.FuncMap{
+		"deref": func(p *uint) uint {
+			if p != nil {
+				return *p
+			}
+			return 0
+		},
+	}
+	tmpl := template.Must(template.New("").Funcs(funcMap).ParseGlob(filepath.Join("templates", "**", "*.html")))
+	r.SetHTMLTemplate(tmpl)
 
 	authHandler := &handler.AuthHandler{
 		UserService: userSvc,
@@ -58,6 +77,15 @@ func main() {
 		protected.GET("/datasources/:id/edit", dsHandler.EditForm)
 		protected.POST("/datasources/:id", dsHandler.Update)
 		protected.POST("/datasources/:id/delete", dsHandler.Delete)
+
+		// Task routes (register /tasks/new BEFORE /tasks/:id to avoid route conflict)
+		protected.GET("/tasks", taskHandler.List)
+		protected.GET("/tasks/new", taskHandler.CreateForm)
+		protected.POST("/tasks", taskHandler.Create)
+		protected.GET("/tasks/:id", taskHandler.Detail)
+		protected.GET("/tasks/:id/edit", taskHandler.EditForm)
+		protected.POST("/tasks/:id", taskHandler.Update)
+		protected.POST("/tasks/:id/delete", taskHandler.Delete)
 	}
 
 	// API routes
@@ -66,6 +94,10 @@ func main() {
 		api.POST("/datasources/test", dsHandler.TestConn)
 		api.GET("/datasources/:id/tables", dsHandler.Tables)
 		api.GET("/datasources/:id/tables/:table/columns", dsHandler.Columns)
+
+		// Task API routes
+		api.GET("/tasks/:id/mappings", taskHandler.Mappings)
+		api.PUT("/tasks/:id/mappings", taskHandler.SaveMappings)
 	}
 
 	fmt.Printf("DataSync server starting on :%d\n", cfg.Port)

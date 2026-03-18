@@ -1,0 +1,293 @@
+{{define "task_form"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataSync - 任务表单</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+<nav class="bg-white shadow">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+        <a href="/" class="text-xl font-bold text-indigo-600">DataSync</a>
+        <div class="flex items-center gap-4">
+            <span class="text-gray-600">{{.username}}</span>
+            <a href="/logout" class="text-sm text-red-500 hover:underline">退出</a>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-3xl mx-auto px-4 py-8">
+    <div class="flex items-center mb-6">
+        <a href="/tasks" class="text-indigo-600 hover:underline mr-4">&larr; 返回</a>
+        <h1 class="text-2xl font-bold text-gray-800">{{if .task}}编辑任务{{else}}新建任务{{end}}</h1>
+    </div>
+
+    {{if .error}}
+    <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">{{.error}}</div>
+    {{end}}
+
+    <div class="bg-white rounded-xl shadow p-6">
+        <form method="POST" action="{{if .task}}/tasks/{{.task.ID}}{{else}}/tasks{{end}}" class="space-y-6">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">任务名称</label>
+                <input type="text" name="name" value="{{if .task}}{{.task.Name}}{{end}}" required
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+
+            <!-- Source Section -->
+            <fieldset class="border border-gray-200 rounded-lg p-4">
+                <legend class="text-sm font-semibold text-gray-700 px-2">源端配置</legend>
+                <div class="space-y-3">
+                    <div class="flex items-center gap-4">
+                        <label class="flex items-center gap-1">
+                            <input type="radio" name="source_mode" value="existing" id="source_mode_existing" checked>
+                            <span class="text-sm">选择已有数据源</span>
+                        </label>
+                        <label class="flex items-center gap-1">
+                            <input type="radio" name="source_mode" value="manual" id="source_mode_manual">
+                            <span class="text-sm">手动输入连接信息</span>
+                        </label>
+                    </div>
+
+                    <div id="source_existing" class="space-y-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">数据源</label>
+                            <select name="source_ds_id" id="source_ds_id"
+                                class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                <option value="">请选择</option>
+                                {{range .datasources}}
+                                <option value="{{.ID}}" {{if and $.task $.task.SourceDSID (eq .ID (deref $.task.SourceDSID))}}selected{{end}}>{{.Name}} ({{.DBType}})</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="source_manual" class="space-y-3 hidden">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">数据库类型</label>
+                            <select name="source_db_type" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                <option value="">请选择</option>
+                                <option value="mysql">MySQL</option>
+                                <option value="postgresql">PostgreSQL</option>
+                                <option value="oracle">Oracle</option>
+                            </select>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">主机</label>
+                                <input type="text" name="source_host" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">端口</label>
+                                <input type="number" name="source_port" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+                                <input type="text" name="source_username" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">密码</label>
+                                <input type="password" name="source_password" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">数据库名</label>
+                            <input type="text" name="source_database_name" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">源表</label>
+                        <select name="source_table" id="source_table"
+                            class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                            <option value="">请先选择数据源</option>
+                            {{if and .task .task.SourceTable}}
+                            <option value="{{.task.SourceTable}}" selected>{{.task.SourceTable}}</option>
+                            {{end}}
+                        </select>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- Target Section -->
+            <fieldset class="border border-gray-200 rounded-lg p-4">
+                <legend class="text-sm font-semibold text-gray-700 px-2">目标端配置</legend>
+                <div class="space-y-3">
+                    <div class="flex items-center gap-4">
+                        <label class="flex items-center gap-1">
+                            <input type="radio" name="target_mode" value="existing" id="target_mode_existing" checked>
+                            <span class="text-sm">选择已有数据源</span>
+                        </label>
+                        <label class="flex items-center gap-1">
+                            <input type="radio" name="target_mode" value="manual" id="target_mode_manual">
+                            <span class="text-sm">手动输入连接信息</span>
+                        </label>
+                    </div>
+
+                    <div id="target_existing" class="space-y-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">数据源</label>
+                            <select name="target_ds_id" id="target_ds_id"
+                                class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                <option value="">请选择</option>
+                                {{range .datasources}}
+                                <option value="{{.ID}}" {{if and $.task $.task.TargetDSID (eq .ID (deref $.task.TargetDSID))}}selected{{end}}>{{.Name}} ({{.DBType}})</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="target_manual" class="space-y-3 hidden">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">数据库类型</label>
+                            <select name="target_db_type" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                <option value="">请选择</option>
+                                <option value="mysql">MySQL</option>
+                                <option value="postgresql">PostgreSQL</option>
+                                <option value="oracle">Oracle</option>
+                            </select>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">主机</label>
+                                <input type="text" name="target_host" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">端口</label>
+                                <input type="number" name="target_port" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+                                <input type="text" name="target_username" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">密码</label>
+                                <input type="password" name="target_password" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">数据库名</label>
+                            <input type="text" name="target_database_name" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">目标表</label>
+                        <select name="target_table" id="target_table"
+                            class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                            <option value="">请先选择数据源</option>
+                            {{if and .task .task.TargetTable}}
+                            <option value="{{.task.TargetTable}}" selected>{{.task.TargetTable}}</option>
+                            {{end}}
+                        </select>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- Sync Settings -->
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">同步类型</label>
+                    <select name="sync_type" required
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="structure" {{if and .task (eq .task.SyncType "structure")}}selected{{end}}>结构同步</option>
+                        <option value="data" {{if and .task (eq .task.SyncType "data")}}selected{{end}}>数据同步</option>
+                        <option value="both" {{if and .task (eq .task.SyncType "both")}}selected{{end}}>全部同步</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">同步模式</label>
+                    <select name="sync_mode" id="sync_mode" required
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="manual" {{if and .task (eq .task.SyncMode "manual")}}selected{{end}}>手动</option>
+                        <option value="cron" {{if and .task (eq .task.SyncMode "cron")}}selected{{end}}>定时</option>
+                        <option value="realtime" {{if and .task (eq .task.SyncMode "realtime")}}selected{{end}}>实时</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="cron_section" class="{{if not (and .task (eq .task.SyncMode "cron"))}}hidden{{end}}">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Cron 表达式</label>
+                <input type="text" name="cron_expr" value="{{if .task}}{{.task.CronExpr}}{{end}}" placeholder="例如: 0 */5 * * *"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+
+            <div class="pt-4">
+                <button type="submit" class="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+// Toggle source mode
+document.querySelectorAll('input[name="source_mode"]').forEach(function(radio) {
+    radio.addEventListener('change', function() {
+        document.getElementById('source_existing').classList.toggle('hidden', this.value !== 'existing');
+        document.getElementById('source_manual').classList.toggle('hidden', this.value !== 'manual');
+    });
+});
+
+// Toggle target mode
+document.querySelectorAll('input[name="target_mode"]').forEach(function(radio) {
+    radio.addEventListener('change', function() {
+        document.getElementById('target_existing').classList.toggle('hidden', this.value !== 'existing');
+        document.getElementById('target_manual').classList.toggle('hidden', this.value !== 'manual');
+    });
+});
+
+// Toggle cron section
+document.getElementById('sync_mode').addEventListener('change', function() {
+    document.getElementById('cron_section').classList.toggle('hidden', this.value !== 'cron');
+});
+
+// Load tables when datasource is selected
+function loadTables(dsId, targetSelect) {
+    if (!dsId) return;
+    var sel = document.getElementById(targetSelect);
+    var currentVal = sel.value;
+    fetch('/api/datasources/' + dsId + '/tables')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            sel.innerHTML = '<option value="">请选择表</option>';
+            if (data.tables) {
+                data.tables.forEach(function(t) {
+                    var opt = document.createElement('option');
+                    opt.value = t;
+                    opt.textContent = t;
+                    if (t === currentVal) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+            }
+        })
+        .catch(function() {
+            sel.innerHTML = '<option value="">加载失败</option>';
+        });
+}
+
+document.getElementById('source_ds_id').addEventListener('change', function() {
+    loadTables(this.value, 'source_table');
+});
+
+document.getElementById('target_ds_id').addEventListener('change', function() {
+    loadTables(this.value, 'target_table');
+});
+
+// Auto-load tables on page load if datasource is pre-selected (edit mode)
+(function() {
+    var srcDS = document.getElementById('source_ds_id');
+    var tgtDS = document.getElementById('target_ds_id');
+    if (srcDS.value) loadTables(srcDS.value, 'source_table');
+    if (tgtDS.value) loadTables(tgtDS.value, 'target_table');
+})();
+</script>
+</body>
+</html>
+{{end}}
