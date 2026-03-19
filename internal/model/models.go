@@ -40,6 +40,8 @@ type SyncTask struct {
 	WatermarkColumn    string    `gorm:"size:200" json:"watermark_column"`
 	WatermarkType      string    `gorm:"size:20" json:"watermark_type"`
 	LastWatermarkValue string    `gorm:"size:500" json:"last_watermark_value"`
+	Concurrency        int       `gorm:"default:1" json:"concurrency"`
+	EnableQualityCheck bool      `gorm:"default:true" json:"enable_quality_check"`
 	CreatedBy          uint      `json:"created_by"`
 	CreatedAt    time.Time `json:"created_at"`
 }

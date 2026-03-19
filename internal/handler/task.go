@@ -61,7 +61,18 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		FilterCondition: c.PostForm("filter_condition"),
 		WatermarkColumn: c.PostForm("watermark_column"),
 		WatermarkType:   c.PostForm("watermark_type"),
-		Status:          "idle",
+		Concurrency: func() int {
+			n, _ := strconv.Atoi(c.PostForm("concurrency"))
+			if n < 1 {
+				n = 1
+			}
+			if n > 8 {
+				n = 8
+			}
+			return n
+		}(),
+		EnableQualityCheck: c.PostForm("enable_quality_check") == "true",
+		Status:             "idle",
 	}
 
 	if uid, exists := c.Get("userID"); exists {
@@ -168,6 +179,16 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	task.FilterCondition = c.PostForm("filter_condition")
 	task.WatermarkColumn = c.PostForm("watermark_column")
 	task.WatermarkType = c.PostForm("watermark_type")
+	if n, err := strconv.Atoi(c.PostForm("concurrency")); err == nil {
+		if n < 1 {
+			n = 1
+		}
+		if n > 8 {
+			n = 8
+		}
+		task.Concurrency = n
+	}
+	task.EnableQualityCheck = c.PostForm("enable_quality_check") == "true"
 	if c.PostForm("reset_watermark") == "1" {
 		task.LastWatermarkValue = ""
 	}
