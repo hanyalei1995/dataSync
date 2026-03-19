@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
@@ -135,7 +136,7 @@ func (c *SQLConnector) readColumns(ctx context.Context, table string) ([]ColumnI
 func (c *SQLConnector) readMySQLColumns(ctx context.Context, table string) ([]ColumnInfo, error) {
 	q := `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE,
 		CASE WHEN COLUMN_KEY='PRI' THEN 1 ELSE 0 END
-		FROM information_schema.COLUMNS WHERE TABLE_NAME=? ORDER BY ORDINAL_POSITION`
+		FROM information_schema.COLUMNS WHERE TABLE_NAME=? AND TABLE_SCHEMA=DATABASE() ORDER BY ORDINAL_POSITION`
 	rows, err := c.db.QueryContext(ctx, q, table)
 	if err != nil {
 		return nil, err
@@ -282,6 +283,7 @@ func (c *SQLConnector) WriteBatch(ctx context.Context, opts WriteOptions) error 
 		for k := range opts.Rows[0] {
 			cols = append(cols, k)
 		}
+		sort.Strings(cols) // map 迭代顺序不稳定，排序保证 vals 与列名对齐
 	}
 	quotedCols := make([]string, len(cols))
 	for i, col := range cols {
