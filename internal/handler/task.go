@@ -377,16 +377,24 @@ func (h *TaskHandler) ProgressStream(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		// SSE requires a flushable writer; Gin's default writer implements it
+		fmt.Fprintf(c.Writer, "data: {\"phase\":\"failed\",\"message\":\"不支持流式响应\"}\n\n")
+		return
+	}
+
 	ch, ok := h.Executor.Subscribe(taskID)
 	if !ok {
 		// Task not running — send done immediately
-		fmt.Fprintf(c.Writer, "data: {\"phase\":\"done\",\"message\":\"任务未运行\"}\n\n")
+		ev := service.ProgressEvent{Phase: "done", Message: "任务未运行"}
+		data, _ := json.Marshal(ev)
+		fmt.Fprintf(c.Writer, "data: %s\n\n", data)
 		c.Writer.Flush()
 		return
 	}
 
 	ctx := c.Request.Context()
-	flusher, _ := c.Writer.(http.Flusher)
 
 	for {
 		select {
@@ -394,7 +402,14 @@ func (h *TaskHandler) ProgressStream(c *gin.Context) {
 			if !open {
 				return
 			}
-			data, _ := json.Marshal(ev)
+			data, err := json.Marshal(ev)
+			if err != nil {
+				fmt.Fprintf(c.Writer, "data: {\"phase\":\"failed\",\"message\":\"序列化错误\"}\n\n")
+				if flusher != nil {
+					flusher.Flush()
+				}
+				return
+			}
 			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
 			if flusher != nil {
 				flusher.Flush()
