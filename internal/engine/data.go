@@ -6,6 +6,8 @@ import (
 	"datasync/internal/model"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,6 +24,7 @@ type DataSyncOptions struct {
 	WriteStrategy string // "insert" or "upsert"
 	OnProgress    func(synced, total int64)
 	WhereClause   string
+	Concurrency   int // 0 or 1 = serial (default); >1 = parallel shards
 }
 
 // SyncResult holds the outcome of a data sync operation.
@@ -42,6 +45,11 @@ func SyncData(ctx context.Context, opts DataSyncOptions) (*SyncResult, error) {
 	}
 	if opts.WriteStrategy == "" {
 		opts.WriteStrategy = "insert"
+	}
+
+	// Use parallel sharding if Concurrency > 1
+	if opts.Concurrency > 1 {
+		return syncDataParallel(ctx, opts)
 	}
 
 	// Count source rows
@@ -452,4 +460,115 @@ func writeOracleUpsertBatch(ctx context.Context, opts DataSyncOptions, targetCol
 		}
 	}
 	return nil
+}
+
+// detectIntPK returns the name of a single integer primary key column, or "".
+func detectIntPK(db *sql.DB, dbType, table string) string {
+	schema, err := ReadTableSchema(db, dbType, table)
+	if err != nil {
+		return ""
+	}
+	for _, col := range schema.Columns {
+		if !col.IsPrimary {
+			continue
+		}
+		t := strings.ToLower(col.Type)
+		if strings.Contains(t, "int") || strings.Contains(t, "serial") || strings.Contains(t, "number") {
+			return col.Name
+		}
+	}
+	return ""
+}
+
+// syncDataParallel runs SyncData using N concurrent goroutines, each handling a shard.
+// If an integer PK exists, uses range-based sharding. Otherwise falls back to serial.
+func syncDataParallel(ctx context.Context, opts DataSyncOptions) (*SyncResult, error) {
+	start := time.Now()
+	n := opts.Concurrency
+
+	pkCol := detectIntPK(opts.SourceDB, opts.SourceDBType, opts.SourceTable)
+
+	if pkCol != "" {
+		// Range-based sharding on integer PK
+		quotedPK := quoteIdentifier(opts.SourceDBType, pkCol)
+
+		baseWhere := ""
+		if opts.WhereClause != "" {
+			baseWhere = " WHERE " + opts.WhereClause
+		}
+
+		var minVal, maxVal int64
+		row := opts.SourceDB.QueryRowContext(ctx,
+			fmt.Sprintf("SELECT COALESCE(MIN(%s),0), COALESCE(MAX(%s),0) FROM %s%s",
+				quotedPK, quotedPK,
+				quoteIdentifier(opts.SourceDBType, opts.SourceTable), baseWhere))
+		if err := row.Scan(&minVal, &maxVal); err != nil || maxVal == 0 {
+			// Fallback to serial
+			opts.Concurrency = 1
+			return SyncData(ctx, opts)
+		}
+
+		step := (maxVal - minVal + int64(n)) / int64(n)
+		shards := make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			lo := minVal + int64(i)*step
+			hi := lo + step
+			var clause string
+			if i == n-1 {
+				clause = fmt.Sprintf("%s >= %d", quotedPK, lo)
+			} else {
+				clause = fmt.Sprintf("%s >= %d AND %s < %d", quotedPK, lo, quotedPK, hi)
+			}
+			if opts.WhereClause != "" {
+				clause = opts.WhereClause + " AND " + clause
+			}
+			shards = append(shards, clause)
+		}
+
+		return runShards(ctx, opts, shards, start)
+	}
+
+	// No integer PK — fall back to serial to avoid duplicate rows
+	opts.Concurrency = 1
+	return SyncData(ctx, opts)
+}
+
+// runShards executes each WHERE-clause shard concurrently and merges results.
+func runShards(ctx context.Context, opts DataSyncOptions, shards []string, start time.Time) (*SyncResult, error) {
+	type shardResult struct {
+		rows int64
+		err  error
+	}
+	results := make([]shardResult, len(shards))
+	var wg sync.WaitGroup
+	var totalSynced int64
+
+	for i, clause := range shards {
+		wg.Add(1)
+		go func(idx int, whereClause string) {
+			defer wg.Done()
+			shardOpts := opts
+			shardOpts.Concurrency = 1
+			shardOpts.WhereClause = whereClause
+			shardOpts.OnProgress = nil
+			res, err := SyncData(ctx, shardOpts)
+			if err != nil {
+				results[idx] = shardResult{err: err}
+				return
+			}
+			results[idx] = shardResult{rows: res.RowsSynced}
+			current := atomic.AddInt64(&totalSynced, res.RowsSynced)
+			if opts.OnProgress != nil {
+				opts.OnProgress(current, 0)
+			}
+		}(i, clause)
+	}
+	wg.Wait()
+
+	for _, r := range results {
+		if r.err != nil {
+			return &SyncResult{RowsSynced: atomic.LoadInt64(&totalSynced), Duration: time.Since(start)}, r.err
+		}
+	}
+	return &SyncResult{RowsSynced: atomic.LoadInt64(&totalSynced), Duration: time.Since(start)}, nil
 }
