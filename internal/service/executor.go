@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"datasync/internal/cdc"
+	"datasync/internal/connector"
 	"datasync/internal/engine"
 	"datasync/internal/model"
 	"encoding/json"
@@ -51,6 +53,18 @@ func (e *Executor) IsRunning(taskID uint) bool {
 	return ok
 }
 
+// connRawDB attempts to extract the underlying *sql.DB from a Connector.
+// Returns nil if the connector does not expose a raw DB.
+func connRawDB(c connector.Connector) *sql.DB {
+	type rawDBer interface {
+		RawDB() *sql.DB
+	}
+	if r, ok := c.(rawDBer); ok {
+		return r.RawDB()
+	}
+	return nil
+}
+
 // Run starts a sync task asynchronously.
 func (e *Executor) Run(taskID uint) error {
 	task, err := e.TaskSvc.GetByID(taskID)
@@ -90,6 +104,7 @@ func (e *Executor) Run(taskID uint) error {
 
 		var listener cdc.CDCListener
 
+		rawTargetDB := connRawDB(targetDB)
 		switch sourceDS.DBType {
 		case "mysql":
 			listener = &cdc.MySQLListener{
@@ -99,7 +114,7 @@ func (e *Executor) Run(taskID uint) error {
 				SourcePassword: sourceDS.Password,
 				SourceDB:       sourceDS.DatabaseName,
 				SourceTable:    task.SourceTable,
-				TargetDB:       targetDB,
+				TargetDB:       rawTargetDB,
 				TargetDBType:   targetDS.DBType,
 				TargetTable:    task.TargetTable,
 				ColumnMappings: colMap,
@@ -112,7 +127,7 @@ func (e *Executor) Run(taskID uint) error {
 				SourcePassword: sourceDS.Password,
 				SourceDB:       sourceDS.DatabaseName,
 				SourceTable:    task.SourceTable,
-				TargetDB:       targetDB,
+				TargetDB:       rawTargetDB,
 				TargetDBType:   targetDS.DBType,
 				TargetTable:    task.TargetTable,
 				ColumnMappings: colMap,
@@ -197,21 +212,24 @@ func (e *Executor) Run(taskID uint) error {
 		switch task.SyncType {
 		case "structure":
 			e.emit(taskID, ProgressEvent{Phase: "structure", Message: "正在同步表结构..."})
-			syncErr = engine.SyncStructure(sourceDB, targetDB, sourceDS.DBType, targetDS.DBType, task.SourceTable, task.TargetTable, mappings)
+			syncErr = engine.SyncStructure(sourceDB, targetDB, task.SourceTable, task.TargetTable, mappings)
 		case "data":
 			e.emit(taskID, ProgressEvent{Phase: "data", Message: "正在同步数据..."})
 			opts := engine.DataSyncOptions{
-				SourceDB:     sourceDB,
-				TargetDB:     targetDB,
-				SourceDBType: sourceDS.DBType,
-				TargetDBType: targetDS.DBType,
-				SourceTable:  task.SourceTable,
-				TargetTable:  task.TargetTable,
-				Mappings:     mappings,
-				BatchSize:    1000,
-				OnProgress:   makeOnProgress(),
-				WhereClause:  buildWhereClause(task, sourceDS.DBType),
-				Concurrency:  task.Concurrency,
+				Source:      sourceDB,
+				Target:      targetDB,
+				SourceTable: task.SourceTable,
+				TargetTable: task.TargetTable,
+				Mappings:    mappings,
+				BatchSize:   1000,
+				OnProgress:  makeOnProgress(),
+				WhereClause: buildWhereClause(task, sourceDS.DBType),
+				Concurrency: task.Concurrency,
+				StartOffset: task.CheckpointOffset,
+				OnCheckpoint: func(offset int64) {
+					e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).
+						Update("checkpoint_offset", offset)
+				},
 			}
 			if task.SyncMode == "upsert" {
 				opts.WriteStrategy = "upsert"
@@ -225,21 +243,24 @@ func (e *Executor) Run(taskID uint) error {
 			}
 		case "both":
 			e.emit(taskID, ProgressEvent{Phase: "structure", Message: "正在同步表结构..."})
-			syncErr = engine.SyncStructure(sourceDB, targetDB, sourceDS.DBType, targetDS.DBType, task.SourceTable, task.TargetTable, mappings)
+			syncErr = engine.SyncStructure(sourceDB, targetDB, task.SourceTable, task.TargetTable, mappings)
 			if syncErr == nil {
 				e.emit(taskID, ProgressEvent{Phase: "data", Message: "正在同步数据..."})
 				opts := engine.DataSyncOptions{
-					SourceDB:     sourceDB,
-					TargetDB:     targetDB,
-					SourceDBType: sourceDS.DBType,
-					TargetDBType: targetDS.DBType,
-					SourceTable:  task.SourceTable,
-					TargetTable:  task.TargetTable,
-					Mappings:     mappings,
-					BatchSize:    1000,
-					OnProgress:   makeOnProgress(),
-					WhereClause:  buildWhereClause(task, sourceDS.DBType),
-					Concurrency:  task.Concurrency,
+					Source:      sourceDB,
+					Target:      targetDB,
+					SourceTable: task.SourceTable,
+					TargetTable: task.TargetTable,
+					Mappings:    mappings,
+					BatchSize:   1000,
+					OnProgress:  makeOnProgress(),
+					WhereClause: buildWhereClause(task, sourceDS.DBType),
+					Concurrency: task.Concurrency,
+					StartOffset: task.CheckpointOffset,
+					OnCheckpoint: func(offset int64) {
+						e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).
+							Update("checkpoint_offset", offset)
+					},
 				}
 				if task.SyncMode == "upsert" {
 					opts.WriteStrategy = "upsert"
@@ -273,6 +294,12 @@ func (e *Executor) Run(taskID uint) error {
 		e.DB.Model(&model.SyncLog{}).Where("id = ?", syncLog.ID).Updates(logUpdate)
 		e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).Update("status", taskStatus)
 
+		// 同步成功后清零断点，下次从头开始
+		if syncErr == nil {
+			e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).
+				Update("checkpoint_offset", 0)
+		}
+
 		// Update watermark after successful sync
 		if syncErr == nil && task.WatermarkColumn != "" && task.WatermarkType != "" {
 			var newWatermark string
@@ -285,9 +312,11 @@ func (e *Executor) Run(taskID uint) error {
 				if fc := task.FilterCondition; fc != "" {
 					maxSQL += " WHERE " + fc
 				}
-				var maxVal string
-				if err := sourceDB.QueryRowContext(ctx, maxSQL).Scan(&maxVal); err == nil && maxVal != "" {
-					newWatermark = maxVal
+				if rawSrc := connRawDB(sourceDB); rawSrc != nil {
+					var maxVal string
+					if err := rawSrc.QueryRowContext(ctx, maxSQL).Scan(&maxVal); err == nil && maxVal != "" {
+						newWatermark = maxVal
+					}
 				}
 			}
 			if newWatermark != "" {
@@ -299,15 +328,13 @@ func (e *Executor) Run(taskID uint) error {
 		// Run quality check after successful data sync
 		if syncErr == nil && task.EnableQualityCheck && task.SyncType != "structure" {
 			qOpts := engine.QualityCheckOptions{
-				SourceDB:     sourceDB,
-				TargetDB:     targetDB,
-				SourceDBType: sourceDS.DBType,
-				TargetDBType: targetDS.DBType,
-				SourceTable:  task.SourceTable,
-				TargetTable:  task.TargetTable,
-				WhereClause:  buildWhereClause(task, sourceDS.DBType),
-				Mappings:     mappings,
-				SampleSize:   50,
+				Source:      sourceDB,
+				Target:      targetDB,
+				SourceTable: task.SourceTable,
+				TargetTable: task.TargetTable,
+				WhereClause: buildWhereClause(task, sourceDS.DBType),
+				Mappings:    mappings,
+				SampleSize:  50,
 			}
 			if qRes, qErr := engine.CheckQuality(ctx, qOpts); qErr == nil {
 				e.DB.Model(&model.SyncLog{}).Where("id = ?", syncLog.ID).Updates(map[string]interface{}{
