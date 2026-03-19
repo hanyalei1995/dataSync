@@ -71,6 +71,24 @@
                         {{else}}bg-gray-100 text-gray-800{{end}}">{{.task.Status}}</span>
                 </p>
             </div>
+            {{if .task.FilterCondition}}
+            <div class="col-span-2 md:col-span-3">
+                <span class="text-sm text-gray-500">过滤条件</span>
+                <p class="font-mono text-sm text-gray-900 bg-gray-50 rounded px-2 py-1 mt-0.5">{{.task.FilterCondition}}</p>
+            </div>
+            {{end}}
+            {{if .task.WatermarkColumn}}
+            <div>
+                <span class="text-sm text-gray-500">水位线字段</span>
+                <p class="font-medium text-gray-900">{{.task.WatermarkColumn}} ({{.task.WatermarkType}})</p>
+            </div>
+            <div>
+                <span class="text-sm text-gray-500">当前水位值</span>
+                <p class="font-mono text-sm text-gray-900">
+                    {{if .task.LastWatermarkValue}}{{.task.LastWatermarkValue}}{{else}}<span class="text-gray-400">未同步过</span>{{end}}
+                </p>
+            </div>
+            {{end}}
         </div>
     </div>
 
