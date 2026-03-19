@@ -85,7 +85,7 @@
             </div>
 
             <div class="field-std">
-                <label class="block text-sm font-medium text-gray-700 mb-1">数据库名</label>
+                <label class="block text-sm font-medium text-gray-700 mb-1" id="db-name-label">数据库名</label>
                 <input type="text" name="database_name" value="{{if .datasource}}{{.datasource.DatabaseName}}{{end}}"
                     class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
             </div>
@@ -156,8 +156,26 @@ function updateDSFields() {
     var fileField = document.getElementById('field-file');
     if (fileField) fileField.style.display = isFile ? '' : 'none';
     // MongoDB extra 字段提示改为 Auth DB
+    var isOracle = (t === 'oracle');
     var extraLabel = document.getElementById('extra-label');
-    if (extraLabel) extraLabel.textContent = isMongo ? 'Auth Database' : '额外参数';
+    var extraInput = document.querySelector('input[name="extra_params"]');
+    if (extraLabel) {
+        if (isMongo) extraLabel.textContent = 'Auth Database';
+        else if (isOracle) extraLabel.textContent = '额外参数（服务名/SID）';
+        else extraLabel.textContent = '额外参数';
+    }
+    if (extraInput) {
+        if (isOracle) {
+            extraInput.placeholder = '服务名模式留空；SID 模式填 SID=ORCL';
+        } else if (isMongo) {
+            extraInput.placeholder = 'admin';
+        } else {
+            extraInput.placeholder = '可选';
+        }
+    }
+    // Oracle: 数据库名标签改为"服务名"
+    var dbNameLabel = document.getElementById('db-name-label');
+    if (dbNameLabel) dbNameLabel.textContent = isOracle ? '服务名 (Service Name)' : '数据库名';
 }
 
 function uploadFile(input) {

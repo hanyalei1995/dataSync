@@ -51,7 +51,21 @@ func BuildDSN(dbType, host string, port int, user, pass, dbName, extra string) s
 	case "postgresql":
 		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", user, pass, host, port, dbName)
 	case "oracle":
-		return fmt.Sprintf("oracle://%s:%s@%s:%d/%s", user, pass, host, port, dbName)
+		// SID 模式：ExtraParams 里填 SID=ORCL，此时路径中不带服务名
+		extraLower := strings.ToLower(extra)
+		if strings.Contains(extraLower, "sid=") {
+			dsn := fmt.Sprintf("oracle://%s:%s@%s:%d", user, pass, host, port)
+			if extra != "" {
+				dsn += "?" + extra
+			}
+			return dsn
+		}
+		// 服务名模式（默认）
+		dsn := fmt.Sprintf("oracle://%s:%s@%s:%d/%s", user, pass, host, port, dbName)
+		if extra != "" {
+			dsn += "?" + extra
+		}
+		return dsn
 	case "clickhouse":
 		return fmt.Sprintf("clickhouse://%s:%s@%s:%d/%s", user, pass, host, port, dbName)
 	}
