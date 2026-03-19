@@ -37,13 +37,13 @@ type SyncTask struct {
 	CronExpr     string    `gorm:"size:100" json:"cron_expr"`
 	Status             string    `gorm:"size:20;default:idle" json:"status"`
 	FilterCondition    string    `gorm:"type:text" json:"filter_condition"`
+	SourceSQL          string    `gorm:"type:text" json:"source_sql"`
 	WatermarkColumn    string    `gorm:"size:200" json:"watermark_column"`
 	WatermarkType      string    `gorm:"size:20" json:"watermark_type"`
 	LastWatermarkValue string    `gorm:"size:500" json:"last_watermark_value"`
 	Concurrency        int       `gorm:"default:1" json:"concurrency"`
 	EnableQualityCheck bool      `gorm:"default:true" json:"enable_quality_check"`
 	CheckpointOffset   int64     `gorm:"default:0" json:"checkpoint_offset"`
-	SourceSQL          string    `gorm:"type:text" json:"source_sql"`
 	CreatedBy          uint      `json:"created_by"`
 	CreatedAt    time.Time `json:"created_at"`
 }
