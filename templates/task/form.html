@@ -127,7 +127,7 @@
                         </div>
                     </div>
 
-                    <div>
+                    <div id="source_table_section">
                         <label class="block text-sm font-medium text-gray-700 mb-1">源表</label>
                         <select name="source_table" id="source_table"
                             class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
@@ -136,6 +136,16 @@
                             <option value="{{.task.SourceTable}}" selected>{{.task.SourceTable}}</option>
                             {{end}}
                         </select>
+                    </div>
+                    <div id="source_sql_section" class="hidden">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            源 SQL
+                            <span class="text-xs text-gray-400 ml-1">（查询结果将分批写入目标表）</span>
+                        </label>
+                        <textarea name="source_sql" id="source_sql" rows="6"
+                            placeholder="SELECT id, name, amount FROM orders WHERE status = 'paid'"
+                            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">{{if and .task .task.SourceSQL}}{{.task.SourceSQL}}{{end}}</textarea>
+                        <p class="text-xs text-gray-400 mt-1">系统会自动分页执行：SELECT * FROM (your SQL) _t LIMIT ? OFFSET ?</p>
                     </div>
                 </div>
             </fieldset>
@@ -237,6 +247,7 @@
                         <option value="structure" {{if and .task (eq .task.SyncType "structure")}}selected{{end}}>结构同步</option>
                         <option value="data" {{if and .task (eq .task.SyncType "data")}}selected{{end}}>数据同步</option>
                         <option value="both" {{if and .task (eq .task.SyncType "both")}}selected{{end}}>全部同步</option>
+                        <option value="sql_import" {{if and .task (eq .task.SyncType "sql_import")}}selected{{end}}>SQL 导入</option>
                     </select>
                 </div>
                 <div>
@@ -360,6 +371,27 @@ document.querySelectorAll('input[name="target_mode"]').forEach(function(radio) {
         document.getElementById('target_manual').classList.toggle('hidden', this.value !== 'manual');
     });
 });
+
+// Toggle fields when sync_type changes
+function updateSyncType() {
+    var t = document.querySelector('select[name="sync_type"]').value;
+    var isSQLImport = (t === 'sql_import');
+    document.getElementById('source_table_section').classList.toggle('hidden', isSQLImport);
+    document.getElementById('source_sql_section').classList.toggle('hidden', !isSQLImport);
+
+    // sql_import does not support realtime mode
+    var modeSelect = document.getElementById('sync_mode');
+    var realtimeOpt = modeSelect.querySelector('option[value="realtime"]');
+    if (isSQLImport) {
+        if (modeSelect.value === 'realtime') modeSelect.value = 'manual';
+        if (realtimeOpt) realtimeOpt.disabled = true;
+    } else {
+        if (realtimeOpt) realtimeOpt.disabled = false;
+    }
+}
+document.querySelector('select[name="sync_type"]').addEventListener('change', updateSyncType);
+// Run on page load to restore state (edit mode)
+updateSyncType();
 
 // Toggle cron section
 document.getElementById('sync_mode').addEventListener('change', function() {
