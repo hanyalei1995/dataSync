@@ -60,6 +60,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		SyncMode:    c.PostForm("sync_mode"),
 		CronExpr:        c.PostForm("cron_expr"),
 		FilterCondition: c.PostForm("filter_condition"),
+		SourceSQL:       c.PostForm("source_sql"),
 		WatermarkColumn: c.PostForm("watermark_column"),
 		WatermarkType:   c.PostForm("watermark_type"),
 		Concurrency: func() int {
@@ -180,6 +181,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	task.SyncMode = c.PostForm("sync_mode")
 	task.CronExpr = c.PostForm("cron_expr")
 	task.FilterCondition = c.PostForm("filter_condition")
+	task.SourceSQL = c.PostForm("source_sql")
 	task.WatermarkColumn = c.PostForm("watermark_column")
 	task.WatermarkType = c.PostForm("watermark_type")
 	if n, err := strconv.Atoi(c.PostForm("concurrency")); err == nil {
