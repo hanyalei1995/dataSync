@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"database/sql"
 	"datasync/internal/connector"
 	"datasync/internal/model"
 	"fmt"
@@ -25,6 +26,7 @@ type DataSyncOptions struct {
 	Concurrency   int    // 0 or 1 = serial (default); >1 = parallel shards
 	StartOffset   int64  // 断点续传起始 offset
 	OnCheckpoint  func(int64) // 每批完成后回调，保存 checkpoint
+	SourceSQL    string // non-empty: run SQL import instead of table sync
 }
 
 // SyncResult holds the outcome of a data sync operation.
@@ -45,6 +47,10 @@ func SyncData(ctx context.Context, opts DataSyncOptions) (*SyncResult, error) {
 	}
 	if opts.WriteStrategy == "" {
 		opts.WriteStrategy = "insert"
+	}
+
+	if opts.SourceSQL != "" {
+		return syncDataFromSQL(ctx, opts)
 	}
 
 	// Use parallel sharding if Concurrency > 1
@@ -435,6 +441,126 @@ func syncDataParallel(ctx context.Context, opts DataSyncOptions) (*SyncResult, e
 	// No integer PK — fall back to serial to avoid duplicate rows
 	opts.Concurrency = 1
 	return SyncData(ctx, opts)
+}
+
+// syncDataFromSQL executes a user-provided SQL on the source (SQL databases only),
+// paginates results via LIMIT/OFFSET subquery, and writes each batch to the target.
+func syncDataFromSQL(ctx context.Context, opts DataSyncOptions) (*SyncResult, error) {
+	start := time.Now()
+
+	if opts.BatchSize <= 0 {
+		opts.BatchSize = 1000
+	}
+	if opts.WriteStrategy == "" {
+		opts.WriteStrategy = "insert"
+	}
+
+	type rawDBer interface {
+		RawDB() *sql.DB
+	}
+	rdb, ok := opts.Source.(rawDBer)
+	if !ok {
+		return nil, fmt.Errorf("sql_import 仅支持 SQL 类数据源（MySQL/PG/Oracle/ClickHouse/Doris）")
+	}
+	db := rdb.RawDB()
+
+	// Estimate total rows via subquery
+	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM (%s) _datasync_count", opts.SourceSQL)
+	var totalRows int64
+	if err := db.QueryRowContext(ctx, countSQL).Scan(&totalRows); err != nil {
+		return nil, fmt.Errorf("count sql rows: %w", err)
+	}
+
+	// Get target PKs for upsert
+	var pkColumns []string
+	if opts.WriteStrategy == "upsert" {
+		schema, err := opts.Target.GetSchema(ctx, opts.TargetTable)
+		if err != nil {
+			return nil, fmt.Errorf("get target pk: %w", err)
+		}
+		for _, col := range schema.Columns {
+			if col.IsPrimary {
+				pkColumns = append(pkColumns, col.Name)
+			}
+		}
+		if len(pkColumns) == 0 {
+			return nil, fmt.Errorf("upsert requires primary key on target table %s", opts.TargetTable)
+		}
+	}
+
+	writeStrategy := connector.StrategyInsert
+	if opts.WriteStrategy == "upsert" {
+		writeStrategy = connector.StrategyUpsert
+	}
+
+	var rowsSynced int64
+	for offset := opts.StartOffset; offset < totalRows; offset += int64(opts.BatchSize) {
+		select {
+		case <-ctx.Done():
+			return &SyncResult{RowsSynced: rowsSynced, Duration: time.Since(start), Error: ctx.Err()}, ctx.Err()
+		default:
+		}
+
+		batchSQL := fmt.Sprintf("SELECT * FROM (%s) _datasync_batch LIMIT %d OFFSET %d",
+			opts.SourceSQL, opts.BatchSize, offset)
+		sqlRows, err := db.QueryContext(ctx, batchSQL)
+		if err != nil {
+			return nil, fmt.Errorf("query batch at offset %d: %w", offset, err)
+		}
+
+		cols, err := sqlRows.Columns()
+		if err != nil {
+			sqlRows.Close()
+			return nil, fmt.Errorf("get columns: %w", err)
+		}
+
+		var rows []connector.Row
+		for sqlRows.Next() {
+			vals := make([]interface{}, len(cols))
+			ptrs := make([]interface{}, len(cols))
+			for i := range vals {
+				ptrs[i] = &vals[i]
+			}
+			if err := sqlRows.Scan(ptrs...); err != nil {
+				sqlRows.Close()
+				return nil, fmt.Errorf("scan row: %w", err)
+			}
+			row := make(connector.Row, len(cols))
+			for i, col := range cols {
+				row[col] = vals[i]
+			}
+			rows = append(rows, row)
+		}
+		sqlRows.Close()
+		if err := sqlRows.Err(); err != nil {
+			return nil, fmt.Errorf("rows error: %w", err)
+		}
+
+		if len(rows) == 0 {
+			break
+		}
+
+		if err := opts.Target.WriteBatch(ctx, connector.WriteOptions{
+			Table:    opts.TargetTable,
+			Columns:  cols,
+			Rows:     rows,
+			Strategy: writeStrategy,
+			PKCols:   pkColumns,
+		}); err != nil {
+			return nil, fmt.Errorf("write batch at offset %d: %w", offset, err)
+		}
+
+		rowsSynced += int64(len(rows))
+
+		if opts.OnCheckpoint != nil {
+			opts.OnCheckpoint(offset + int64(len(rows)))
+		}
+		if opts.OnProgress != nil {
+			opts.OnProgress(rowsSynced, totalRows)
+		}
+	}
+
+	return &SyncResult{RowsSynced: rowsSynced, Duration: time.Since(start)}, nil
 }
 
 // runShards executes each WHERE-clause shard concurrently and merges results.
