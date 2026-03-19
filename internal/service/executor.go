@@ -41,10 +41,6 @@ func (e *Executor) IsRunning(taskID uint) bool {
 
 // Run starts a sync task asynchronously.
 func (e *Executor) Run(taskID uint) error {
-	if e.IsRunning(taskID) {
-		return fmt.Errorf("任务 %d 正在运行中", taskID)
-	}
-
 	task, err := e.TaskSvc.GetByID(taskID)
 	if err != nil {
 		return fmt.Errorf("加载任务失败: %w", err)
@@ -150,7 +146,11 @@ func (e *Executor) Run(taskID uint) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	progressCh := make(chan ProgressEvent, 64)
 	e.progress.Store(taskID, progressCh)
-	e.running.Store(taskID, cancel)
+	if _, loaded := e.running.LoadOrStore(taskID, cancel); loaded {
+		e.progress.Delete(taskID)
+		cancel()
+		return fmt.Errorf("任务 %d 正在运行中", taskID)
+	}
 
 	// Run sync in goroutine
 	go func() {
@@ -164,6 +164,22 @@ func (e *Executor) Run(taskID uint) error {
 		}()
 
 		e.emit(taskID, ProgressEvent{Phase: "connecting", Message: "正在建立数据库连接..."})
+
+		makeOnProgress := func() func(int64, int64) {
+			return func(synced, total int64) {
+				pct := float64(0)
+				if total > 0 {
+					pct = float64(synced) / float64(total) * 100
+				}
+				e.emit(taskID, ProgressEvent{
+					Phase:      "data",
+					Message:    "正在同步数据...",
+					RowsSynced: synced,
+					TotalRows:  total,
+					Percent:    pct,
+				})
+			}
+		}
 
 		var syncErr error
 		var rowsSynced int64
@@ -185,19 +201,7 @@ func (e *Executor) Run(taskID uint) error {
 				TargetTable:  task.TargetTable,
 				Mappings:     mappings,
 				BatchSize:    1000,
-				OnProgress: func(synced, total int64) {
-					pct := float64(0)
-					if total > 0 {
-						pct = float64(synced) / float64(total) * 100
-					}
-					e.emit(taskID, ProgressEvent{
-						Phase:      "data",
-						Message:    "正在同步数据...",
-						RowsSynced: synced,
-						TotalRows:  total,
-						Percent:    pct,
-					})
-				},
+				OnProgress:   makeOnProgress(),
 			}
 			if task.SyncMode == "upsert" {
 				opts.WriteStrategy = "upsert"
@@ -223,19 +227,7 @@ func (e *Executor) Run(taskID uint) error {
 					TargetTable:  task.TargetTable,
 					Mappings:     mappings,
 					BatchSize:    1000,
-					OnProgress: func(synced, total int64) {
-						pct := float64(0)
-						if total > 0 {
-							pct = float64(synced) / float64(total) * 100
-						}
-						e.emit(taskID, ProgressEvent{
-							Phase:      "data",
-							Message:    "正在同步数据...",
-							RowsSynced: synced,
-							TotalRows:  total,
-							Percent:    pct,
-						})
-					},
+					OnProgress:   makeOnProgress(),
 				}
 				if task.SyncMode == "upsert" {
 					opts.WriteStrategy = "upsert"
