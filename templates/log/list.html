@@ -33,7 +33,7 @@
         <form method="GET" action="/logs" class="flex items-center gap-3">
             <label class="text-sm text-gray-600">状态筛选:</label>
             <select name="status" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                <option value="" {{if eq .currentStatus ""}}>全部</option>
+                <option value="" {{if eq .currentStatus ""}}selected{{end}}>全部</option>
                 <option value="running" {{if eq .currentStatus "running"}}selected{{end}}>运行中</option>
                 <option value="success" {{if eq .currentStatus "success"}}selected{{end}}>成功</option>
                 <option value="failed" {{if eq .currentStatus "failed"}}selected{{end}}>失败</option>
