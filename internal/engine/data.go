@@ -26,7 +26,7 @@ type DataSyncOptions struct {
 	Concurrency   int    // 0 or 1 = serial (default); >1 = parallel shards
 	StartOffset   int64  // 断点续传起始 offset
 	OnCheckpoint  func(int64) // 每批完成后回调，保存 checkpoint
-	SourceSQL    string // non-empty: run SQL import instead of table sync
+	SourceSQL     string // non-empty: run SQL import instead of table sync
 }
 
 // SyncResult holds the outcome of a data sync operation.
@@ -445,22 +445,16 @@ func syncDataParallel(ctx context.Context, opts DataSyncOptions) (*SyncResult, e
 
 // syncDataFromSQL executes a user-provided SQL on the source (SQL databases only),
 // paginates results via LIMIT/OFFSET subquery, and writes each batch to the target.
+// Note: for deterministic results, the user SQL should include an ORDER BY clause.
 func syncDataFromSQL(ctx context.Context, opts DataSyncOptions) (*SyncResult, error) {
 	start := time.Now()
-
-	if opts.BatchSize <= 0 {
-		opts.BatchSize = 1000
-	}
-	if opts.WriteStrategy == "" {
-		opts.WriteStrategy = "insert"
-	}
 
 	type rawDBer interface {
 		RawDB() *sql.DB
 	}
 	rdb, ok := opts.Source.(rawDBer)
 	if !ok {
-		return nil, fmt.Errorf("sql_import 仅支持 SQL 类数据源（MySQL/PG/Oracle/ClickHouse/Doris）")
+		return nil, fmt.Errorf("sql_import requires a SQL data source (MySQL/PostgreSQL/ClickHouse/Doris); MongoDB and file sources are not supported")
 	}
 	db := rdb.RawDB()
 
@@ -501,39 +495,9 @@ func syncDataFromSQL(ctx context.Context, opts DataSyncOptions) (*SyncResult, er
 		default:
 		}
 
-		batchSQL := fmt.Sprintf("SELECT * FROM (%s) _datasync_batch LIMIT %d OFFSET %d",
-			opts.SourceSQL, opts.BatchSize, offset)
-		sqlRows, err := db.QueryContext(ctx, batchSQL)
+		rows, cols, err := readSQLBatch(ctx, db, opts.SourceSQL, opts.BatchSize, offset)
 		if err != nil {
-			return nil, fmt.Errorf("query batch at offset %d: %w", offset, err)
-		}
-
-		cols, err := sqlRows.Columns()
-		if err != nil {
-			sqlRows.Close()
-			return nil, fmt.Errorf("get columns: %w", err)
-		}
-
-		var rows []connector.Row
-		for sqlRows.Next() {
-			vals := make([]interface{}, len(cols))
-			ptrs := make([]interface{}, len(cols))
-			for i := range vals {
-				ptrs[i] = &vals[i]
-			}
-			if err := sqlRows.Scan(ptrs...); err != nil {
-				sqlRows.Close()
-				return nil, fmt.Errorf("scan row: %w", err)
-			}
-			row := make(connector.Row, len(cols))
-			for i, col := range cols {
-				row[col] = vals[i]
-			}
-			rows = append(rows, row)
-		}
-		sqlRows.Close()
-		if err := sqlRows.Err(); err != nil {
-			return nil, fmt.Errorf("rows error: %w", err)
+			return nil, fmt.Errorf("read batch at offset %d: %w", offset, err)
 		}
 
 		if len(rows) == 0 {
@@ -561,6 +525,39 @@ func syncDataFromSQL(ctx context.Context, opts DataSyncOptions) (*SyncResult, er
 	}
 
 	return &SyncResult{RowsSynced: rowsSynced, Duration: time.Since(start)}, nil
+}
+
+// readSQLBatch executes a paginated query and returns the rows and column names for one batch.
+func readSQLBatch(ctx context.Context, db *sql.DB, query string, batchSize int, offset int64) ([]connector.Row, []string, error) {
+	batchSQL := fmt.Sprintf("SELECT * FROM (%s) _datasync_batch LIMIT %d OFFSET %d", query, batchSize, offset)
+	sqlRows, err := db.QueryContext(ctx, batchSQL)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer sqlRows.Close()
+
+	cols, err := sqlRows.Columns()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var rows []connector.Row
+	for sqlRows.Next() {
+		vals := make([]interface{}, len(cols))
+		ptrs := make([]interface{}, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := sqlRows.Scan(ptrs...); err != nil {
+			return nil, nil, err
+		}
+		row := make(connector.Row, len(cols))
+		for i, col := range cols {
+			row[col] = vals[i]
+		}
+		rows = append(rows, row)
+	}
+	return rows, cols, sqlRows.Err()
 }
 
 // runShards executes each WHERE-clause shard concurrently and merges results.
