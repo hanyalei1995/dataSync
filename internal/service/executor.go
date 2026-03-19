@@ -121,6 +121,8 @@ func (e *Executor) Run(taskID uint) error {
 
 		progressCh := make(chan ProgressEvent, 64)
 		e.progress.Store(taskID, progressCh)
+		// Store a no-op cancel func so IsRunning() works; actual cancellation goes
+		// through CDCManager.StopListener, called by Stop().
 		e.running.Store(taskID, context.CancelFunc(func() {}))
 		e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).Update("status", "running")
 		return nil
@@ -293,7 +295,11 @@ func (e *Executor) Stop(taskID uint) error {
 
 	e.running.Delete(taskID)
 
-	// Close progress channel for CDC tasks (non-CDC goroutine handles its own close via defer)
+	// Close progress channel. LoadAndDelete is atomic with the goroutine's defer
+	// (which also uses LoadAndDelete), so exactly one caller closes the channel.
+	// For non-CDC tasks, if the goroutine already emitted a terminal event before
+	// Stop() wins the race, there may be two terminal events in the buffer — the
+	// SSE handler exits on the first, so the second is harmless.
 	if val, ok := e.progress.LoadAndDelete(taskID); ok {
 		ch := val.(chan ProgressEvent)
 		select {
