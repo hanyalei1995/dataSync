@@ -57,8 +57,11 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		TargetTable: c.PostForm("target_table"),
 		SyncType:    c.PostForm("sync_type"),
 		SyncMode:    c.PostForm("sync_mode"),
-		CronExpr:    c.PostForm("cron_expr"),
-		Status:      "idle",
+		CronExpr:        c.PostForm("cron_expr"),
+		FilterCondition: c.PostForm("filter_condition"),
+		WatermarkColumn: c.PostForm("watermark_column"),
+		WatermarkType:   c.PostForm("watermark_type"),
+		Status:          "idle",
 	}
 
 	if uid, exists := c.Get("userID"); exists {
@@ -162,6 +165,12 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	task.SyncType = c.PostForm("sync_type")
 	task.SyncMode = c.PostForm("sync_mode")
 	task.CronExpr = c.PostForm("cron_expr")
+	task.FilterCondition = c.PostForm("filter_condition")
+	task.WatermarkColumn = c.PostForm("watermark_column")
+	task.WatermarkType = c.PostForm("watermark_type")
+	if c.PostForm("reset_watermark") == "1" {
+		task.LastWatermarkValue = ""
+	}
 
 	// Source
 	sourceMode := c.PostForm("source_mode")
@@ -366,6 +375,17 @@ func (h *TaskHandler) Stop(c *gin.Context) {
 		return
 	}
 	c.Redirect(http.StatusFound, "/tasks/"+c.Param("id"))
+}
+
+// ProgressSnapshot returns the latest progress event for a task as JSON (for polling).
+func (h *TaskHandler) ProgressSnapshot(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	ev, ok := h.Executor.GetProgress(uint(id))
+	if !ok {
+		c.JSON(http.StatusOK, gin.H{"running": false})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"running": true, "progress": ev})
 }
 
 func (h *TaskHandler) ProgressStream(c *gin.Context) {
