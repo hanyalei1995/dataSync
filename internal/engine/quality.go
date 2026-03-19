@@ -2,24 +2,21 @@ package engine
 
 import (
 	"context"
-	"database/sql"
+	"datasync/internal/connector"
 	"datasync/internal/model"
 	"fmt"
 	"math"
-	"strings"
 )
 
 // QualityCheckOptions configures a data quality check.
 type QualityCheckOptions struct {
-	SourceDB     *sql.DB
-	TargetDB     *sql.DB
-	SourceDBType string
-	TargetDBType string
-	SourceTable  string
-	TargetTable  string
-	WhereClause  string // applied to source COUNT
-	Mappings     []model.FieldMapping
-	SampleSize   int // default 50
+	Source      connector.Connector
+	Target      connector.Connector
+	SourceTable string
+	TargetTable string
+	WhereClause string // applied to source COUNT
+	Mappings    []model.FieldMapping
+	SampleSize  int // default 50
 }
 
 // QualityCheckResult holds the outcome of a quality check.
@@ -40,22 +37,23 @@ func CheckQuality(ctx context.Context, opts QualityCheckOptions) (*QualityCheckR
 	res := &QualityCheckResult{}
 
 	// 1. Count source rows (with filter)
-	countSQL := buildCountSQL(opts.SourceDBType, opts.SourceTable, opts.WhereClause)
-	if err := opts.SourceDB.QueryRowContext(ctx, countSQL).Scan(&res.SourceRows); err != nil {
+	var err error
+	res.SourceRows, err = opts.Source.CountRows(ctx, opts.SourceTable, opts.WhereClause)
+	if err != nil {
 		return nil, fmt.Errorf("count source rows: %w", err)
 	}
 
 	// 2. Count target rows (total, no WHERE)
-	tgtCountSQL := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(opts.TargetDBType, opts.TargetTable))
-	if err := opts.TargetDB.QueryRowContext(ctx, tgtCountSQL).Scan(&res.TargetRows); err != nil {
+	res.TargetRows, err = opts.Target.CountRows(ctx, opts.TargetTable, "")
+	if err != nil {
 		return nil, fmt.Errorf("count target rows: %w", err)
 	}
 
 	// 3. Sample comparison (requires int PK)
-	pkCol := detectIntPK(opts.SourceDB, opts.SourceDBType, opts.SourceTable)
+	pkCol := detectIntPKFromConnector(ctx, opts.Source, opts.SourceTable)
 	if pkCol != "" {
-		matched, total, err := sampleCompare(ctx, opts, pkCol)
-		if err == nil {
+		matched, total, sampleErr := sampleCompare(ctx, opts, pkCol)
+		if sampleErr == nil {
 			res.SampleTotal = total
 			res.SampleMatched = matched
 		}
@@ -66,155 +64,102 @@ func CheckQuality(ctx context.Context, opts QualityCheckOptions) (*QualityCheckR
 	return res, nil
 }
 
-// sampleCompare picks random PKs from source, fetches same rows from target, compares field by field.
+// sampleCompare picks sample rows from source via ReadBatch, fetches the same rows
+// from target, and compares field by field.
 func sampleCompare(ctx context.Context, opts QualityCheckOptions, pkCol string) (matched, total int, err error) {
-	quotedSrcPK := quoteIdentifier(opts.SourceDBType, pkCol)
-	quotedTgtPK := quoteIdentifier(opts.TargetDBType, pkCol)
-
-	// Random sample of PKs from source
-	var sampleSQL string
-	switch strings.ToLower(opts.SourceDBType) {
-	case "postgresql":
-		sampleSQL = fmt.Sprintf("SELECT %s FROM %s ORDER BY RANDOM() LIMIT %d",
-			quotedSrcPK, quoteIdentifier(opts.SourceDBType, opts.SourceTable), opts.SampleSize)
-	default:
-		sampleSQL = fmt.Sprintf("SELECT %s FROM %s ORDER BY RAND() LIMIT %d",
-			quotedSrcPK, quoteIdentifier(opts.SourceDBType, opts.SourceTable), opts.SampleSize)
-	}
-
-	rows, err := opts.SourceDB.QueryContext(ctx, sampleSQL)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer rows.Close()
-
-	var pkVals []interface{}
-	for rows.Next() {
-		var v interface{}
-		if err := rows.Scan(&v); err != nil {
-			continue
-		}
-		pkVals = append(pkVals, v)
-	}
-	if len(pkVals) == 0 {
-		return 0, 0, nil
-	}
+	srcDBType := opts.Source.DBType()
+	tgtDBType := opts.Target.DBType()
 
 	// Build column list from mappings
-	sourceCols, _ := columnsFromMappings(opts.Mappings)
+	sourceCols, targetCols := columnsFromMappings(opts.Mappings)
+
+	// If no mappings provided, fetch column names from source schema
 	if len(sourceCols) == 0 {
-		cols, err := getSourceColumns(opts.SourceDB, opts.SourceDBType, opts.SourceTable)
-		if err != nil {
-			return 0, 0, err
+		s, schemaErr := opts.Source.GetSchema(ctx, opts.SourceTable)
+		if schemaErr != nil {
+			return 0, 0, schemaErr
 		}
-		sourceCols = cols
-	}
-	_, targetCols := columnsFromMappings(opts.Mappings)
-	if len(targetCols) == 0 {
+		for _, c := range s.Columns {
+			sourceCols = append(sourceCols, c.Name)
+		}
 		targetCols = sourceCols
 	}
 
-	// Build IN placeholders for source DB
-	srcPlaceholders := makePlaceholders(opts.SourceDBType, len(pkVals))
-	srcFetchSQL := fmt.Sprintf("SELECT %s FROM %s WHERE %s IN (%s)",
-		buildQualColList(opts.SourceDBType, sourceCols),
-		quoteIdentifier(opts.SourceDBType, opts.SourceTable),
-		quotedSrcPK,
-		strings.Join(srcPlaceholders, ","))
-
-	srcRows, err := opts.SourceDB.QueryContext(ctx, srcFetchSQL, pkVals...)
-	if err != nil {
-		return 0, 0, err
+	// Read a sample of rows (first SampleSize rows matching WhereClause) to get PK values.
+	sampleRows, readErr := opts.Source.ReadBatch(ctx, connector.ReadOptions{
+		Table:   opts.SourceTable,
+		Columns: []string{pkCol},
+		Where:   opts.WhereClause,
+		Offset:  0,
+		Limit:   int64(opts.SampleSize),
+	})
+	if readErr != nil {
+		return 0, 0, readErr
 	}
-	srcData, err := scanRows(srcRows, len(sourceCols))
-	srcRows.Close()
-	if err != nil {
-		return 0, 0, err
+	if len(sampleRows) == 0 {
+		return 0, 0, nil
 	}
 
-	// Build IN placeholders for target DB
-	tgtPlaceholders := makePlaceholders(opts.TargetDBType, len(pkVals))
-	tgtFetchSQL := fmt.Sprintf("SELECT %s FROM %s WHERE %s IN (%s)",
-		buildQualColList(opts.TargetDBType, targetCols),
-		quoteIdentifier(opts.TargetDBType, opts.TargetTable),
-		quotedTgtPK,
-		strings.Join(tgtPlaceholders, ","))
+	quotedSrcPK := quoteIdentifier(srcDBType, pkCol)
+	quotedTgtPK := quoteIdentifier(tgtDBType, pkCol)
 
-	tgtRows, err := opts.TargetDB.QueryContext(ctx, tgtFetchSQL, pkVals...)
-	if err != nil {
-		return 0, 0, err
-	}
-	tgtData, err := scanRows(tgtRows, len(targetCols))
-	tgtRows.Close()
-	if err != nil {
-		return 0, 0, err
-	}
-
-	// Find PK column index in source columns
-	pkIdx := 0
-	for i, c := range sourceCols {
-		if strings.EqualFold(c, pkCol) {
-			pkIdx = i
-			break
-		}
-	}
-
-	// Build target lookup map keyed by PK string representation
-	tgtMap := make(map[string][]interface{})
-	for _, row := range tgtData {
-		if len(row) > pkIdx {
-			tgtMap[fmt.Sprintf("%v", row[pkIdx])] = row
-		}
-	}
-
-	total = len(srcData)
-	for _, srcRow := range srcData {
-		if len(srcRow) <= pkIdx {
+	// Fetch source and target rows one by one using the sampled PK values.
+	srcDataMap := make(map[string]connector.Row, len(sampleRows))
+	for _, pkRow := range sampleRows {
+		pkVal := pkRow[pkCol]
+		whereExpr := fmt.Sprintf("%s = %v", quotedSrcPK, pkVal)
+		rows, batchErr := opts.Source.ReadBatch(ctx, connector.ReadOptions{
+			Table:   opts.SourceTable,
+			Columns: sourceCols,
+			Where:   whereExpr,
+			Offset:  0,
+			Limit:   1,
+		})
+		if batchErr != nil || len(rows) == 0 {
 			continue
 		}
-		pk := fmt.Sprintf("%v", srcRow[pkIdx])
-		tgtRow, ok := tgtMap[pk]
+		srcDataMap[fmt.Sprintf("%v", pkVal)] = rows[0]
+	}
+
+	tgtDataMap := make(map[string]connector.Row, len(sampleRows))
+	for _, pkRow := range sampleRows {
+		pkVal := pkRow[pkCol]
+		whereExpr := fmt.Sprintf("%s = %v", quotedTgtPK, pkVal)
+		rows, batchErr := opts.Target.ReadBatch(ctx, connector.ReadOptions{
+			Table:   opts.TargetTable,
+			Columns: targetCols,
+			Where:   whereExpr,
+			Offset:  0,
+			Limit:   1,
+		})
+		if batchErr != nil || len(rows) == 0 {
+			continue
+		}
+		tgtDataMap[fmt.Sprintf("%v", pkVal)] = rows[0]
+	}
+
+	total = len(srcDataMap)
+	for pkKey, srcRow := range srcDataMap {
+		tgtRow, ok := tgtDataMap[pkKey]
 		if !ok {
 			continue
 		}
-		if rowsMatch(srcRow, tgtRow) {
+		if connRowsMatch(srcRow, tgtRow, sourceCols, targetCols) {
 			matched++
 		}
 	}
 	return matched, total, nil
 }
 
-func makePlaceholders(dbType string, n int) []string {
-	placeholders := make([]string, n)
-	for i := range placeholders {
-		switch strings.ToLower(dbType) {
-		case "postgresql":
-			placeholders[i] = fmt.Sprintf("$%d", i+1)
-		case "oracle":
-			placeholders[i] = fmt.Sprintf(":%d", i+1)
-		default:
-			placeholders[i] = "?"
-		}
-	}
-	return placeholders
-}
-
-func buildQualColList(dbType string, cols []string) string {
-	quoted := make([]string, len(cols))
-	for i, c := range cols {
-		quoted[i] = quoteIdentifier(dbType, c)
-	}
-	return strings.Join(quoted, ", ")
-}
-
-// rowsMatch compares two rows field by field, tolerating small float differences.
-func rowsMatch(a, b []interface{}) bool {
-	if len(a) != len(b) {
+// connRowsMatch compares two connector.Row values field-by-field using the provided column lists.
+func connRowsMatch(src, tgt connector.Row, srcCols, tgtCols []string) bool {
+	if len(srcCols) != len(tgtCols) {
 		return false
 	}
-	for i := range a {
-		av := fmt.Sprintf("%v", a[i])
-		bv := fmt.Sprintf("%v", b[i])
+	for i, sc := range srcCols {
+		tc := tgtCols[i]
+		av := fmt.Sprintf("%v", src[sc])
+		bv := fmt.Sprintf("%v", tgt[tc])
 		if av == bv {
 			continue
 		}
@@ -233,66 +178,6 @@ func rowsMatch(a, b []interface{}) bool {
 }
 
 // determineQualityStatus derives the overall status from row count and sample results.
-// buildCountSQL builds a COUNT query with an optional WHERE clause (used by quality checks).
-func buildCountSQL(dbType, table, whereClause string) string {
-	q := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(dbType, table))
-	if whereClause != "" {
-		q += " WHERE " + whereClause
-	}
-	return q
-}
-
-// detectIntPK returns the name of a single integer primary key column from a *sql.DB, or "".
-func detectIntPK(db *sql.DB, dbType, table string) string {
-	schema, err := ReadTableSchema(db, dbType, table)
-	if err != nil {
-		return ""
-	}
-	for _, col := range schema.Columns {
-		if !col.IsPrimary {
-			continue
-		}
-		t := strings.ToLower(col.Type)
-		if strings.Contains(t, "int") || strings.Contains(t, "serial") || strings.Contains(t, "number") {
-			return col.Name
-		}
-	}
-	return ""
-}
-
-// getSourceColumns queries column names from the source database when no mappings are provided.
-func getSourceColumns(db *sql.DB, dbType, table string) ([]string, error) {
-	schema, err := ReadTableSchema(db, dbType, table)
-	if err != nil {
-		return nil, err
-	}
-	cols := make([]string, 0, len(schema.Columns))
-	for _, c := range schema.Columns {
-		cols = append(cols, c.Name)
-	}
-	return cols, nil
-}
-
-// scanRows reads all rows from a sql.Rows result set into a slice of value slices.
-func scanRows(rows *sql.Rows, colCount int) ([][]interface{}, error) {
-	var batch [][]interface{}
-	for rows.Next() {
-		values := make([]interface{}, colCount)
-		ptrs := make([]interface{}, colCount)
-		for i := range values {
-			ptrs[i] = &values[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return nil, err
-		}
-		batch = append(batch, values)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return batch, nil
-}
-
 func determineQualityStatus(r *QualityCheckResult) string {
 	// Row count check
 	if r.SourceRows > 0 {

@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"context"
 	"database/sql"
+	"datasync/internal/connector"
 	"datasync/internal/model"
 	"fmt"
 	"strings"
@@ -29,7 +31,38 @@ type SchemaDiff struct {
 	Column ColumnSchema
 }
 
+// connectorSchemaToTableSchema converts a *connector.Schema to the internal *TableSchema.
+func connectorSchemaToTableSchema(s *connector.Schema, dbType string) *TableSchema {
+	ts := &TableSchema{
+		TableName:    s.TableName,
+		SourceDBType: dbType,
+		Columns:      make([]ColumnSchema, 0, len(s.Columns)),
+	}
+	for _, c := range s.Columns {
+		ts.Columns = append(ts.Columns, ColumnSchema{
+			Name:      c.Name,
+			Type:      c.Type,
+			Nullable:  c.Nullable,
+			IsPrimary: c.IsPrimary,
+		})
+	}
+	return ts
+}
+
+// rawDBFromConnector tries to extract the underlying *sql.DB from a Connector.
+// Returns an error if the connector does not expose a raw DB.
+func rawDBFromConnector(c connector.Connector) (*sql.DB, error) {
+	type rawDBer interface {
+		RawDB() *sql.DB
+	}
+	if r, ok := c.(rawDBer); ok {
+		return r.RawDB(), nil
+	}
+	return nil, fmt.Errorf("connector of type %T does not support RawDB(); cannot execute DDL", c)
+}
+
 // ReadTableSchema reads the table structure from the database.
+// Kept for backward-compatibility with data.go and other callers.
 func ReadTableSchema(db *sql.DB, dbType, table string) (*TableSchema, error) {
 	switch strings.ToLower(dbType) {
 	case "mysql":
@@ -302,25 +335,39 @@ func GenerateAlterSQL(diffs []SchemaDiff, targetDBType, targetTable string) []st
 }
 
 // SyncStructure is the main entry point for synchronizing table structure.
-func SyncStructure(sourceDB, targetDB *sql.DB, sourceType, targetType, sourceTable, targetTable string, mappings []model.FieldMapping) error {
-	// 1. Read source schema
-	srcSchema, err := ReadTableSchema(sourceDB, sourceType, sourceTable)
+// It uses connector.Connector for schema introspection and falls back to the
+// raw *sql.DB (via RawDB()) for DDL execution.
+func SyncStructure(src, dst connector.Connector, sourceTable, targetTable string, mappings []model.FieldMapping) error {
+	ctx := context.Background()
+	targetType := dst.DBType()
+
+	// 1. Read source schema via Connector.GetSchema
+	connSrcSchema, err := src.GetSchema(ctx, sourceTable)
 	if err != nil {
 		return fmt.Errorf("read source schema: %w", err)
 	}
+	srcSchema := connectorSchemaToTableSchema(connSrcSchema, src.DBType())
 
-	// 2. Try to read target schema
-	tgtSchema, err := ReadTableSchema(targetDB, targetType, targetTable)
-	if err != nil || len(tgtSchema.Columns) == 0 {
-		// 3. Target doesn't exist — create it
+	// 2. Obtain raw *sql.DB from target connector for DDL execution
+	targetRawDB, err := rawDBFromConnector(dst)
+	if err != nil {
+		return err
+	}
+
+	// 3. Try to read target schema via Connector.GetSchema
+	connTgtSchema, tgtErr := dst.GetSchema(ctx, targetTable)
+	if tgtErr != nil || len(connTgtSchema.Columns) == 0 {
+		// 4. Target doesn't exist — create it
 		createSQL := GenerateCreateSQL(srcSchema, targetType, targetTable, mappings)
-		if _, execErr := targetDB.Exec(createSQL); execErr != nil {
+		if _, execErr := targetRawDB.Exec(createSQL); execErr != nil {
 			return fmt.Errorf("create target table: %w", execErr)
 		}
 		return nil
 	}
 
-	// 4. Target exists — compare and alter
+	tgtSchema := connectorSchemaToTableSchema(connTgtSchema, targetType)
+
+	// 5. Target exists — compare and alter
 	diffs := CompareSchema(srcSchema, tgtSchema)
 	if len(diffs) == 0 {
 		return nil
@@ -328,7 +375,7 @@ func SyncStructure(sourceDB, targetDB *sql.DB, sourceType, targetType, sourceTab
 
 	alterStmts := GenerateAlterSQL(diffs, targetType, targetTable)
 	for _, stmt := range alterStmts {
-		if _, execErr := targetDB.Exec(stmt); execErr != nil {
+		if _, execErr := targetRawDB.Exec(stmt); execErr != nil {
 			return fmt.Errorf("alter target table: %w (SQL: %s)", execErr, stmt)
 		}
 	}
@@ -349,4 +396,3 @@ func quoteIdentifier(dbType, name string) string {
 		return name
 	}
 }
-
