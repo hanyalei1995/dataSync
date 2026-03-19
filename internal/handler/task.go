@@ -13,6 +13,8 @@ import (
 type TaskHandler struct {
 	TaskService       *service.TaskService
 	DataSourceService *service.DataSourceService
+	Executor          *service.Executor
+	Scheduler         *service.Scheduler
 }
 
 func (h *TaskHandler) List(c *gin.Context) {
@@ -120,6 +122,11 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		}
 	}
 
+	// Schedule cron task if applicable
+	if task.SyncMode == "cron" && h.Scheduler != nil {
+		_ = h.Scheduler.AddTask(*task)
+	}
+
 	c.Redirect(http.StatusFound, "/tasks")
 }
 
@@ -207,11 +214,24 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		})
 		return
 	}
+
+	// Update scheduler
+	if h.Scheduler != nil {
+		if task.SyncMode == "cron" {
+			_ = h.Scheduler.AddTask(*task)
+		} else {
+			h.Scheduler.RemoveTask(task.ID)
+		}
+	}
+
 	c.Redirect(http.StatusFound, "/tasks")
 }
 
 func (h *TaskHandler) Delete(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	if h.Scheduler != nil {
+		h.Scheduler.RemoveTask(uint(id))
+	}
 	h.TaskService.Delete(uint(id))
 	c.Redirect(http.StatusFound, "/tasks")
 }
@@ -307,4 +327,31 @@ func (h *TaskHandler) SaveMappings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "映射已保存"})
+}
+
+func (h *TaskHandler) Run(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err := h.Executor.Run(uint(id)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// Check if request expects JSON
+	if c.GetHeader("Accept") == "application/json" || c.Query("format") == "json" {
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "任务已启动"})
+		return
+	}
+	c.Redirect(http.StatusFound, "/tasks/"+c.Param("id"))
+}
+
+func (h *TaskHandler) Stop(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err := h.Executor.Stop(uint(id)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if c.GetHeader("Accept") == "application/json" || c.Query("format") == "json" {
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "任务已停止"})
+		return
+	}
+	c.Redirect(http.StatusFound, "/tasks/"+c.Param("id"))
 }

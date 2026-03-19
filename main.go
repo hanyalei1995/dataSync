@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"datasync/internal/config"
 	"datasync/internal/database"
 	"datasync/internal/handler"
@@ -9,7 +10,12 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -37,7 +43,6 @@ func main() {
 	}
 	scheduler := service.NewScheduler(db, executor)
 	scheduler.Start()
-	defer scheduler.Stop()
 
 	taskHandler := &handler.TaskHandler{
 		TaskService:       taskSvc,
@@ -113,8 +118,34 @@ func main() {
 		api.GET("/tasks/:id/logs", logHandler.TaskLogs)
 	}
 
-	fmt.Printf("DataSync server starting on :%d\n", cfg.Port)
-	if err := r.Run(fmt.Sprintf(":%d", cfg.Port)); err != nil {
-		log.Fatal("failed to start server:", err)
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", cfg.Port),
+		Handler: r,
 	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("failed to start server:", err)
+		}
+	}()
+
+	fmt.Printf("DataSync server started on :%d\n", cfg.Port)
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutting down server...")
+	scheduler.Stop()
+	if executor.CDCManager != nil {
+		executor.CDCManager.StopAll()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatal("Server forced to shutdown:", err)
+	}
+	log.Println("Server exited")
 }
