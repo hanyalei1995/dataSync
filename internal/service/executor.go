@@ -274,6 +274,10 @@ func (e *Executor) Run(taskID uint) error {
 				}
 			}
 		case "sql_import":
+			if task.SourceSQL == "" {
+				syncErr = fmt.Errorf("sql_import 任务的源 SQL 不能为空")
+				break
+			}
 			e.emit(taskID, ProgressEvent{Phase: "data", Message: "正在执行 SQL 导入..."})
 			opts := engine.DataSyncOptions{
 				Source:      sourceDB,
