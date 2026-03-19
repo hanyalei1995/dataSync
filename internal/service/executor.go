@@ -7,6 +7,7 @@ import (
 	"datasync/internal/model"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,12 +26,22 @@ type ProgressEvent struct {
 
 // Executor manages running sync tasks.
 type Executor struct {
-	DB         *gorm.DB
-	DSSvc      *DataSourceService
-	TaskSvc    *TaskService
-	CDCManager *cdc.Manager
-	running    sync.Map // map[uint]context.CancelFunc
-	progress   sync.Map // map[uint]chan ProgressEvent
+	DB           *gorm.DB
+	DSSvc        *DataSourceService
+	TaskSvc      *TaskService
+	CDCManager   *cdc.Manager
+	running      sync.Map // map[uint]context.CancelFunc
+	progress     sync.Map // map[uint]chan ProgressEvent
+	lastProgress sync.Map // map[uint]ProgressEvent — latest snapshot for polling
+}
+
+// GetProgress returns the most recent progress snapshot for a task.
+func (e *Executor) GetProgress(taskID uint) (ProgressEvent, bool) {
+	val, ok := e.lastProgress.Load(taskID)
+	if !ok {
+		return ProgressEvent{}, false
+	}
+	return val.(ProgressEvent), true
 }
 
 // IsRunning returns true if the given task is currently executing.
@@ -159,6 +170,7 @@ func (e *Executor) Run(taskID uint) error {
 		defer sourceDB.Close()
 		defer targetDB.Close()
 		defer e.running.Delete(taskID)
+		defer e.lastProgress.Delete(taskID)
 		defer func() {
 			if _, loaded := e.progress.LoadAndDelete(taskID); loaded {
 				close(progressCh)
@@ -204,6 +216,7 @@ func (e *Executor) Run(taskID uint) error {
 				Mappings:     mappings,
 				BatchSize:    1000,
 				OnProgress:   makeOnProgress(),
+				WhereClause:  buildWhereClause(task, sourceDS.DBType),
 			}
 			if task.SyncMode == "upsert" {
 				opts.WriteStrategy = "upsert"
@@ -230,6 +243,7 @@ func (e *Executor) Run(taskID uint) error {
 					Mappings:     mappings,
 					BatchSize:    1000,
 					OnProgress:   makeOnProgress(),
+					WhereClause:  buildWhereClause(task, sourceDS.DBType),
 				}
 				if task.SyncMode == "upsert" {
 					opts.WriteStrategy = "upsert"
@@ -263,6 +277,29 @@ func (e *Executor) Run(taskID uint) error {
 		e.DB.Model(&model.SyncLog{}).Where("id = ?", syncLog.ID).Updates(logUpdate)
 		e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).Update("status", taskStatus)
 
+		// Update watermark after successful sync
+		if syncErr == nil && task.WatermarkColumn != "" && task.WatermarkType != "" {
+			var newWatermark string
+			switch task.WatermarkType {
+			case "timestamp":
+				newWatermark = now.UTC().Format(time.RFC3339)
+			case "id":
+				col := quoteWatermarkCol(task.WatermarkColumn, sourceDS.DBType)
+				maxSQL := fmt.Sprintf("SELECT COALESCE(MAX(%s), '') FROM %s", col, task.SourceTable)
+				if fc := task.FilterCondition; fc != "" {
+					maxSQL += " WHERE " + fc
+				}
+				var maxVal string
+				if err := sourceDB.QueryRowContext(ctx, maxSQL).Scan(&maxVal); err == nil && maxVal != "" {
+					newWatermark = maxVal
+				}
+			}
+			if newWatermark != "" {
+				e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).
+					Update("last_watermark_value", newWatermark)
+			}
+		}
+
 		if syncErr != nil {
 			e.emit(taskID, ProgressEvent{Phase: "failed", Message: "同步失败", ErrorMsg: syncErr.Error()})
 		} else {
@@ -294,6 +331,7 @@ func (e *Executor) Stop(taskID uint) error {
 	}
 
 	e.running.Delete(taskID)
+	e.lastProgress.Delete(taskID)
 
 	// Close progress channel. LoadAndDelete is atomic with the goroutine's defer
 	// (which also uses LoadAndDelete), so exactly one caller closes the channel.
@@ -323,7 +361,9 @@ func (e *Executor) Subscribe(taskID uint) (<-chan ProgressEvent, bool) {
 }
 
 // emit sends a progress event, dropping it if the channel is full.
+// It also caches the event as the latest snapshot for polling consumers.
 func (e *Executor) emit(taskID uint, ev ProgressEvent) {
+	e.lastProgress.Store(taskID, ev)
 	val, ok := e.progress.Load(taskID)
 	if !ok {
 		return
@@ -352,4 +392,38 @@ func (e *Executor) resolveDataSource(dsID *uint, configJSON string) (model.DataS
 		return ds, nil
 	}
 	return model.DataSource{}, fmt.Errorf("未指定数据源")
+}
+
+// buildWhereClause assembles the SQL WHERE clause (without the WHERE keyword)
+// from the task's FilterCondition and watermark settings.
+func buildWhereClause(task *model.SyncTask, sourceDBType string) string {
+	var parts []string
+
+	if task.FilterCondition != "" {
+		parts = append(parts, task.FilterCondition)
+	}
+
+	if task.WatermarkColumn != "" && task.WatermarkType != "" && task.LastWatermarkValue != "" {
+		col := quoteWatermarkCol(task.WatermarkColumn, sourceDBType)
+		switch task.WatermarkType {
+		case "id":
+			parts = append(parts, fmt.Sprintf("%s > %s", col, task.LastWatermarkValue))
+		case "timestamp":
+			parts = append(parts, fmt.Sprintf("%s > '%s'", col, task.LastWatermarkValue))
+		}
+	}
+
+	return strings.Join(parts, " AND ")
+}
+
+// quoteWatermarkCol quotes a column name for the given DB type.
+func quoteWatermarkCol(col, dbType string) string {
+	switch strings.ToLower(dbType) {
+	case "mysql":
+		return "`" + col + "`"
+	case "postgresql":
+		return `"` + col + `"`
+	default:
+		return col
+	}
 }
