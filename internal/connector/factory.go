@@ -16,8 +16,8 @@ func FromDataSource(ds model.DataSource) (Connector, error) {
 		uri := buildMongoURI(ds)
 		return NewMongoConnector(uri, ds.DatabaseName)
 	case "csv", "excel":
-		// Host 字段复用为文件路径
-		return NewFileConnector(ds.Host)
+		// Host 字段复用为文件路径；使用显式类型避免因路径无扩展名导致报错
+		return NewFileConnectorWithType(ds.Host, strings.ToLower(ds.DBType))
 	default:
 		return nil, fmt.Errorf("unsupported db_type: %s", ds.DBType)
 	}

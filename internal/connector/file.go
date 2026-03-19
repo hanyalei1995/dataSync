@@ -40,6 +40,24 @@ func NewFileConnector(filePath string) (*FileConnector, error) {
 	return &FileConnector{filePath: filePath, fileType: fileType}, nil
 }
 
+// NewFileConnectorWithType 按显式指定的类型（"csv" 或 "excel"）创建 FileConnector，
+// 不依赖文件扩展名，文件路径缺少扩展名时自动补全。
+func NewFileConnectorWithType(filePath, fileType string) (*FileConnector, error) {
+	switch fileType {
+	case "csv", "excel":
+	default:
+		return nil, fmt.Errorf("unsupported file type: %s", fileType)
+	}
+	// 若路径无扩展名，自动补全，避免写入时库无法识别格式
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if fileType == "csv" && ext != ".csv" {
+		filePath += ".csv"
+	} else if fileType == "excel" && ext != ".xlsx" && ext != ".xls" {
+		filePath += ".xlsx"
+	}
+	return &FileConnector{filePath: filePath, fileType: fileType}, nil
+}
+
 func (c *FileConnector) DBType() string { return c.fileType }
 
 func (c *FileConnector) Ping(_ context.Context) error {
