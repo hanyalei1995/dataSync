@@ -21,13 +21,15 @@ type DataSyncOptions struct {
 	BatchSize     int    // default 1000
 	WriteStrategy string // "insert" or "upsert"
 	OnProgress    func(synced, total int64)
+	WhereClause   string
 }
 
 // SyncResult holds the outcome of a data sync operation.
 type SyncResult struct {
-	RowsSynced int64
-	Duration   time.Duration
-	Error      error
+	RowsSynced        int64
+	Duration          time.Duration
+	Error             error
+	MaxWatermarkValue string
 }
 
 // SyncData performs a full table data sync from source to target with batch processing.
@@ -44,7 +46,7 @@ func SyncData(ctx context.Context, opts DataSyncOptions) (*SyncResult, error) {
 
 	// Count source rows
 	var totalRows int64
-	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(opts.SourceDBType, opts.SourceTable))
+	countSQL := buildCountSQL(opts.SourceDBType, opts.SourceTable, opts.WhereClause)
 	if err := opts.SourceDB.QueryRowContext(ctx, countSQL).Scan(&totalRows); err != nil {
 		return nil, fmt.Errorf("count source rows: %w", err)
 	}
@@ -89,7 +91,7 @@ func SyncData(ctx context.Context, opts DataSyncOptions) (*SyncResult, error) {
 		}
 
 		// Read batch from source
-		selectSQL := buildBatchSelectSQL(opts.SourceDBType, opts.SourceTable, sourceCols, offset, int64(opts.BatchSize))
+		selectSQL := buildBatchSelectSQL(opts.SourceDBType, opts.SourceTable, sourceCols, offset, int64(opts.BatchSize), opts.WhereClause)
 		rows, err := opts.SourceDB.QueryContext(ctx, selectSQL)
 		if err != nil {
 			return nil, fmt.Errorf("query source batch at offset %d: %w", offset, err)
@@ -154,8 +156,17 @@ func getSourceColumns(db *sql.DB, dbType, table string) ([]string, error) {
 	return cols, nil
 }
 
+// buildCountSQL builds a COUNT query with an optional WHERE clause.
+func buildCountSQL(dbType, table, whereClause string) string {
+	q := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(dbType, table))
+	if whereClause != "" {
+		q += " WHERE " + whereClause
+	}
+	return q
+}
+
 // buildBatchSelectSQL builds a paginated SELECT statement for the given database type.
-func buildBatchSelectSQL(dbType, table string, columns []string, offset, limit int64) string {
+func buildBatchSelectSQL(dbType, table string, columns []string, offset, limit int64, whereClause string) string {
 	quotedCols := make([]string, len(columns))
 	for i, c := range columns {
 		quotedCols[i] = quoteIdentifier(dbType, c)
@@ -163,16 +174,21 @@ func buildBatchSelectSQL(dbType, table string, columns []string, offset, limit i
 	colList := strings.Join(quotedCols, ", ")
 	tbl := quoteIdentifier(dbType, table)
 
+	whereFragment := ""
+	if whereClause != "" {
+		whereFragment = " WHERE " + whereClause
+	}
+
 	switch strings.ToLower(dbType) {
 	case "oracle":
 		// Oracle ROWNUM-based pagination
 		return fmt.Sprintf(
-			"SELECT %s FROM (SELECT a.*, ROWNUM rn FROM (SELECT %s FROM %s) a WHERE ROWNUM <= %d) WHERE rn > %d",
-			colList, colList, tbl, offset+limit, offset,
+			"SELECT %s FROM (SELECT a.*, ROWNUM rn FROM (SELECT %s FROM %s%s) a WHERE ROWNUM <= %d) WHERE rn > %d",
+			colList, colList, tbl, whereFragment, offset+limit, offset,
 		)
 	default:
 		// MySQL and PostgreSQL both support LIMIT/OFFSET
-		return fmt.Sprintf("SELECT %s FROM %s LIMIT %d OFFSET %d", colList, tbl, limit, offset)
+		return fmt.Sprintf("SELECT %s FROM %s%s LIMIT %d OFFSET %d", colList, tbl, whereFragment, limit, offset)
 	}
 }
 

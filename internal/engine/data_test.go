@@ -9,7 +9,7 @@ import (
 )
 
 func TestBuildBatchSelectSQL_MySQL(t *testing.T) {
-	sql := buildBatchSelectSQL("mysql", "users", []string{"id", "name"}, 0, 100)
+	sql := buildBatchSelectSQL("mysql", "users", []string{"id", "name"}, 0, 100, "")
 	assert.Contains(t, sql, "SELECT")
 	assert.Contains(t, sql, "`id`")
 	assert.Contains(t, sql, "`name`")
@@ -18,7 +18,7 @@ func TestBuildBatchSelectSQL_MySQL(t *testing.T) {
 }
 
 func TestBuildBatchSelectSQL_PostgreSQL(t *testing.T) {
-	sql := buildBatchSelectSQL("postgresql", "users", []string{"id", "name"}, 50, 100)
+	sql := buildBatchSelectSQL("postgresql", "users", []string{"id", "name"}, 50, 100, "")
 	assert.Contains(t, sql, "SELECT")
 	assert.Contains(t, sql, "\"id\"")
 	assert.Contains(t, sql, "\"name\"")
@@ -27,7 +27,7 @@ func TestBuildBatchSelectSQL_PostgreSQL(t *testing.T) {
 }
 
 func TestBuildBatchSelectSQL_Oracle(t *testing.T) {
-	sql := buildBatchSelectSQL("oracle", "users", []string{"id", "name"}, 0, 100)
+	sql := buildBatchSelectSQL("oracle", "users", []string{"id", "name"}, 0, 100, "")
 	assert.Contains(t, sql, "SELECT")
 	assert.Contains(t, sql, "ROWNUM")
 	assert.Contains(t, sql, "\"ID\"")
