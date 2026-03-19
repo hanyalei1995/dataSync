@@ -211,6 +211,7 @@ func (e *Executor) Run(taskID uint) error {
 				BatchSize:    1000,
 				OnProgress:   makeOnProgress(),
 				WhereClause:  buildWhereClause(task, sourceDS.DBType),
+				Concurrency:  task.Concurrency,
 			}
 			if task.SyncMode == "upsert" {
 				opts.WriteStrategy = "upsert"
@@ -238,6 +239,7 @@ func (e *Executor) Run(taskID uint) error {
 					BatchSize:    1000,
 					OnProgress:   makeOnProgress(),
 					WhereClause:  buildWhereClause(task, sourceDS.DBType),
+					Concurrency:  task.Concurrency,
 				}
 				if task.SyncMode == "upsert" {
 					opts.WriteStrategy = "upsert"
