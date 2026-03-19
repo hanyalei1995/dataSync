@@ -1,58 +1,52 @@
 package service
 
 import (
+	"context"
 	"crypto/md5"
-	"database/sql"
-	"datasync/internal/engine"
+	"datasync/internal/connector"
 	"datasync/internal/model"
 	"fmt"
 	"sync"
-	"time"
 )
 
-// ConnPool caches *sql.DB instances to avoid reconnecting on every task run.
+// ConnPool 缓存 Connector 实例，避免每次任务重新建连。
 type ConnPool struct {
 	mu    sync.Mutex
-	conns map[string]*sql.DB
+	conns map[string]connector.Connector
 }
 
 func NewConnPool() *ConnPool {
-	return &ConnPool{conns: make(map[string]*sql.DB)}
+	return &ConnPool{conns: make(map[string]connector.Connector)}
 }
 
-// Get returns a cached connection for the datasource, creating one if needed.
-// The caller must NOT close the returned *sql.DB.
-func (p *ConnPool) Get(ds model.DataSource) (*sql.DB, error) {
+// Get 返回缓存的 Connector，不存在或 Ping 失败则重新创建。
+func (p *ConnPool) Get(ds model.DataSource) (connector.Connector, error) {
 	key := dsKey(ds)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if db, ok := p.conns[key]; ok {
-		if err := db.Ping(); err == nil {
-			return db, nil
+	if conn, ok := p.conns[key]; ok {
+		if err := conn.Ping(context.Background()); err == nil {
+			return conn, nil
 		}
-		// Stale connection — close and reconnect
-		db.Close()
+		conn.Close()
 		delete(p.conns, key)
 	}
 
-	db, err := engine.Connect(ds)
+	conn, err := connector.FromDataSource(ds)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(3)
-	db.SetConnMaxLifetime(30 * time.Minute)
-	p.conns[key] = db
-	return db, nil
+	p.conns[key] = conn
+	return conn, nil
 }
 
-// CloseAll closes all cached connections. Call on app shutdown.
+// CloseAll 关闭所有缓存连接，应用关闭时调用。
 func (p *ConnPool) CloseAll() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for k, db := range p.conns {
-		db.Close()
+	for k, conn := range p.conns {
+		conn.Close()
 		delete(p.conns, k)
 	}
 }
