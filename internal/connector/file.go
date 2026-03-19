@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/xuri/excelize/v2"
@@ -19,8 +20,9 @@ type FileConnector struct {
 	filePath string
 	fileType string // "csv" | "excel"
 	// 全量缓存（文件较小，一次性载入）
-	headers []string
-	data    [][]string
+	loadedTable string // 记录已缓存的 table/sheet 名，避免跨 sheet 误用旧缓存
+	headers     []string
+	data        [][]string
 }
 
 // NewFileConnector 按文件扩展名自动识别 CSV 或 Excel。
@@ -112,6 +114,7 @@ func (c *FileConnector) WriteBatch(_ context.Context, opts WriteOptions) error {
 		for k := range opts.Rows[0] {
 			cols = append(cols, k)
 		}
+		sort.Strings(cols) // map 遍历顺序不确定，排序保证列顺序稳定
 	}
 	if c.fileType == "csv" {
 		return c.writeCSV(cols, opts.Rows)
@@ -185,9 +188,13 @@ func (c *FileConnector) writeExcel(sheet string, cols []string, rows []Row) erro
 }
 
 func (c *FileConnector) loadData(table string) error {
-	if c.headers != nil {
-		return nil
+	if c.headers != nil && c.loadedTable == table {
+		return nil // 已缓存且 sheet 相同，直接复用
 	}
+	// 清空旧缓存
+	c.headers = nil
+	c.data = nil
+	c.loadedTable = table
 	if c.fileType == "csv" {
 		return c.loadCSV()
 	}

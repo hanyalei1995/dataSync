@@ -99,9 +99,19 @@ func (c *MongoConnector) ReadBatch(ctx context.Context, opts ReadOptions) ([]Row
 
 	findOpts := options.Find().SetSkip(opts.Offset).SetLimit(opts.Limit)
 	if len(opts.Columns) > 0 {
+		hasID := false
+		for _, col := range opts.Columns {
+			if col == "_id" {
+				hasID = true
+				break
+			}
+		}
 		proj := bson.D{}
 		for _, col := range opts.Columns {
 			proj = append(proj, bson.E{Key: col, Value: 1})
+		}
+		if !hasID {
+			proj = append(proj, bson.E{Key: "_id", Value: 0}) // 不请求 _id 时显式排除
 		}
 		findOpts.SetProjection(proj)
 	}
