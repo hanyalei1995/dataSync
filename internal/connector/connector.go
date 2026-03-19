@@ -3,7 +3,15 @@ package connector
 import "context"
 
 // Row 代表一行数据，key 为列名。
-type Row = map[string]interface{}
+type Row map[string]any
+
+// WriteStrategy 控制写入策略。
+type WriteStrategy string
+
+const (
+	StrategyInsert WriteStrategy = "insert"
+	StrategyUpsert WriteStrategy = "upsert"
+)
 
 // ReadOptions 控制批量读取行为。
 type ReadOptions struct {
@@ -11,7 +19,7 @@ type ReadOptions struct {
 	Columns []string // 空表示 SELECT *
 	Where   string   // 不含 WHERE 关键字
 	Offset  int64
-	Limit   int64
+	Limit   int64 // 0 表示不限制
 }
 
 // WriteOptions 控制批量写入行为。
@@ -19,13 +27,14 @@ type WriteOptions struct {
 	Table    string
 	Columns  []string
 	Rows     []Row
-	Strategy string   // "insert" | "upsert"
-	PKCols   []string // upsert 时需要
+	Strategy WriteStrategy // StrategyInsert | StrategyUpsert
+	PKCols   []string      // upsert 时需要
 }
 
 // Schema 描述一张表/集合的字段信息。
 type Schema struct {
-	Columns []ColumnInfo
+	TableName string
+	Columns   []ColumnInfo
 }
 
 // ColumnInfo 描述单个字段。
