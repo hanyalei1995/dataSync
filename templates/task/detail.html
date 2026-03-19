@@ -295,11 +295,33 @@ function updateProgress(ev) {
     phaseLabel.textContent = ev.message || '';
 }
 
-function connectProgressStream() {
+function connectProgressStream(retryCount) {
     if (progressES) return;
+    retryCount = retryCount || 0;
+    // Reset state for new run
+    var barFill = document.getElementById('progress-bar-fill');
+    var errDiv = document.getElementById('progress-error');
+    if (barFill) {
+        barFill.classList.remove('bg-green-500');
+        barFill.classList.add('bg-indigo-500');
+        barFill.style.width = '0%';
+    }
+    if (errDiv) {
+        errDiv.classList.add('hidden');
+        errDiv.textContent = '';
+    }
+    var pctLabel = document.getElementById('progress-percent-label');
+    if (pctLabel) pctLabel.textContent = '0%';
     progressES = new EventSource('/api/tasks/' + taskID + '/progress/stream');
     progressES.onmessage = function(e) {
         var ev = JSON.parse(e.data);
+        // If task not yet running and we haven't exhausted retries, retry
+        if (ev.phase === 'done' && ev.message === '任务未运行' && retryCount < 8) {
+            progressES.close();
+            progressES = null;
+            setTimeout(function() { connectProgressStream(retryCount + 1); }, 400);
+            return;
+        }
         updateProgress(ev);
         if (ev.phase === 'done' || ev.phase === 'failed') {
             progressES.close();
@@ -310,6 +332,11 @@ function connectProgressStream() {
     progressES.onerror = function() {
         progressES.close();
         progressES = null;
+        var panel = document.getElementById('progress-panel');
+        var phaseLabel = document.getElementById('progress-phase-label');
+        if (panel && !panel.classList.contains('hidden')) {
+            phaseLabel.textContent = '监听连接中断，请手动刷新页面';
+        }
     };
 }
 
