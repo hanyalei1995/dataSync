@@ -7,18 +7,23 @@ import (
 	"datasync/internal/handler"
 	"datasync/internal/middleware"
 	"datasync/internal/service"
+	"embed"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+//go:embed templates
+var templatesFS embed.FS
 
 func main() {
 	cfg := config.Default()
@@ -55,7 +60,7 @@ func main() {
 
 	r := gin.Default()
 
-	// Register custom template functions and load templates
+	// Register custom template functions and load embedded templates
 	funcMap := template.FuncMap{
 		"deref": func(p *uint) uint {
 			if p != nil {
@@ -64,7 +69,14 @@ func main() {
 			return 0
 		},
 	}
-	tmpl := template.Must(template.New("").Funcs(funcMap).ParseGlob(filepath.Join("templates", "**", "*.html")))
+	var htmlFiles []string
+	fs.WalkDir(templatesFS, "templates", func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(path, ".html") {
+			htmlFiles = append(htmlFiles, path)
+		}
+		return nil
+	})
+	tmpl := template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, htmlFiles...))
 	r.SetHTMLTemplate(tmpl)
 
 	authHandler := &handler.AuthHandler{
@@ -115,6 +127,7 @@ func main() {
 		// Task API routes
 		api.GET("/tasks/:id/mappings", taskHandler.Mappings)
 		api.PUT("/tasks/:id/mappings", taskHandler.SaveMappings)
+		api.GET("/tasks/:id/progress/stream", taskHandler.ProgressStream)
 		api.GET("/tasks/:id/logs", logHandler.TaskLogs)
 	}
 

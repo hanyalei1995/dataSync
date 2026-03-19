@@ -4,7 +4,9 @@ import (
 	"datasync/internal/model"
 	"datasync/internal/service"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -272,6 +274,7 @@ func (h *TaskHandler) Detail(c *gin.Context) {
 		"sourceName": sourceName,
 		"targetName": targetName,
 		"username":   username,
+		"error":      c.Query("error"),
 	})
 }
 
@@ -331,12 +334,16 @@ func (h *TaskHandler) SaveMappings(c *gin.Context) {
 
 func (h *TaskHandler) Run(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	isJSON := c.GetHeader("Accept") == "application/json" || c.Query("format") == "json"
 	if err := h.Executor.Run(uint(id)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if isJSON {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.Redirect(http.StatusFound, "/tasks/"+c.Param("id")+"?error="+url.QueryEscape(err.Error()))
 		return
 	}
-	// Check if request expects JSON
-	if c.GetHeader("Accept") == "application/json" || c.Query("format") == "json" {
+	if isJSON {
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": "任务已启动"})
 		return
 	}
@@ -345,13 +352,58 @@ func (h *TaskHandler) Run(c *gin.Context) {
 
 func (h *TaskHandler) Stop(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	isJSON := c.GetHeader("Accept") == "application/json" || c.Query("format") == "json"
 	if err := h.Executor.Stop(uint(id)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if isJSON {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.Redirect(http.StatusFound, "/tasks/"+c.Param("id")+"?error="+url.QueryEscape(err.Error()))
 		return
 	}
-	if c.GetHeader("Accept") == "application/json" || c.Query("format") == "json" {
+	if isJSON {
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": "任务已停止"})
 		return
 	}
 	c.Redirect(http.StatusFound, "/tasks/"+c.Param("id"))
+}
+
+func (h *TaskHandler) ProgressStream(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	taskID := uint(id)
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	ch, ok := h.Executor.Subscribe(taskID)
+	if !ok {
+		// Task not running — send done immediately
+		fmt.Fprintf(c.Writer, "data: {\"phase\":\"done\",\"message\":\"任务未运行\"}\n\n")
+		c.Writer.Flush()
+		return
+	}
+
+	ctx := c.Request.Context()
+	flusher, _ := c.Writer.(http.Flusher)
+
+	for {
+		select {
+		case ev, open := <-ch:
+			if !open {
+				return
+			}
+			data, _ := json.Marshal(ev)
+			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+			if flusher != nil {
+				flusher.Flush()
+			}
+			if ev.Phase == "done" || ev.Phase == "failed" {
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
