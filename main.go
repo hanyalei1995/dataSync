@@ -131,6 +131,7 @@ func main() {
 		api.PUT("/tasks/:id/mappings", taskHandler.SaveMappings)
 		api.GET("/tasks/:id/progress", taskHandler.ProgressSnapshot)
 		api.GET("/tasks/:id/progress/stream", taskHandler.ProgressStream)
+		api.POST("/tasks/:id/verify", taskHandler.Verify)
 		api.GET("/tasks/:id/logs", logHandler.TaskLogs)
 	}
 

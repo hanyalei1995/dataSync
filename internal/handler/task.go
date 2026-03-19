@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"datasync/internal/engine"
 	"datasync/internal/model"
 	"datasync/internal/service"
 	"encoding/json"
@@ -462,4 +463,95 @@ func (h *TaskHandler) ProgressStream(c *gin.Context) {
 			return
 		}
 	}
+}
+
+// Verify runs a data quality check on the task's tables and updates the latest SyncLog.
+func (h *TaskHandler) Verify(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	taskID := uint(id)
+
+	task, err := h.TaskService.GetByID(taskID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在"})
+		return
+	}
+
+	sourceDS, err := resolveDS(h, task.SourceDSID, task.SourceConfig)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "解析源数据源失败: " + err.Error()})
+		return
+	}
+	targetDS, err := resolveDS(h, task.TargetDSID, task.TargetConfig)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "解析目标数据源失败: " + err.Error()})
+		return
+	}
+
+	sourceDB, err := h.Executor.Pool.Get(sourceDS)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接源库失败: " + err.Error()})
+		return
+	}
+	targetDB, err := h.Executor.Pool.Get(targetDS)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接目标库失败: " + err.Error()})
+		return
+	}
+
+	mappings, _ := h.TaskService.GetMappings(taskID)
+	qOpts := engine.QualityCheckOptions{
+		SourceDB:     sourceDB,
+		TargetDB:     targetDB,
+		SourceDBType: sourceDS.DBType,
+		TargetDBType: targetDS.DBType,
+		SourceTable:  task.SourceTable,
+		TargetTable:  task.TargetTable,
+		Mappings:     mappings,
+		SampleSize:   50,
+	}
+
+	qRes, err := engine.CheckQuality(c.Request.Context(), qOpts)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Update the latest SyncLog for this task
+	logs, _ := h.TaskService.GetLogs(taskID, 1)
+	if len(logs) > 0 {
+		h.TaskService.DB.Model(&logs[0]).Updates(map[string]interface{}{
+			"source_rows":    qRes.SourceRows,
+			"target_rows":    qRes.TargetRows,
+			"sample_total":   qRes.SampleTotal,
+			"sample_matched": qRes.SampleMatched,
+			"quality_status": qRes.Status,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"source_rows":    qRes.SourceRows,
+		"target_rows":    qRes.TargetRows,
+		"sample_total":   qRes.SampleTotal,
+		"sample_matched": qRes.SampleMatched,
+		"status":         qRes.Status,
+	})
+}
+
+// resolveDS resolves a DataSource from a saved ID or inline JSON config.
+func resolveDS(h *TaskHandler, dsID *uint, configJSON string) (model.DataSource, error) {
+	if dsID != nil {
+		ds, err := h.DataSourceService.GetByID(*dsID)
+		if err != nil {
+			return model.DataSource{}, err
+		}
+		return *ds, nil
+	}
+	if configJSON != "" {
+		var ds model.DataSource
+		if err := json.Unmarshal([]byte(configJSON), &ds); err != nil {
+			return model.DataSource{}, fmt.Errorf("解析数据源配置失败: %w", err)
+		}
+		return ds, nil
+	}
+	return model.DataSource{}, fmt.Errorf("未指定数据源")
 }
