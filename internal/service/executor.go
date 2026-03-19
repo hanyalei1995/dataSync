@@ -30,6 +30,7 @@ type Executor struct {
 	DSSvc        *DataSourceService
 	TaskSvc      *TaskService
 	CDCManager   *cdc.Manager
+	Pool         *ConnPool
 	running      sync.Map // map[uint]context.CancelFunc
 	progress     sync.Map // map[uint]chan ProgressEvent
 	lastProgress sync.Map // map[uint]ProgressEvent — latest snapshot for polling
@@ -68,13 +69,12 @@ func (e *Executor) Run(taskID uint) error {
 	}
 
 	// Connect to source and target
-	sourceDB, err := engine.Connect(sourceDS)
+	sourceDB, err := e.Pool.Get(sourceDS)
 	if err != nil {
 		return fmt.Errorf("连接源数据库失败: %w", err)
 	}
-	targetDB, err := engine.Connect(targetDS)
+	targetDB, err := e.Pool.Get(targetDS)
 	if err != nil {
-		sourceDB.Close()
 		return fmt.Errorf("连接目标数据库失败: %w", err)
 	}
 
@@ -125,8 +125,6 @@ func (e *Executor) Run(taskID uint) error {
 		}
 
 		if err := e.CDCManager.StartListener(taskID, listener); err != nil {
-			sourceDB.Close()
-			targetDB.Close()
 			return fmt.Errorf("启动CDC监听失败: %w", err)
 		}
 
@@ -147,8 +145,6 @@ func (e *Executor) Run(taskID uint) error {
 		Status:    "running",
 	}
 	if err := e.DB.Create(&syncLog).Error; err != nil {
-		sourceDB.Close()
-		targetDB.Close()
 		return fmt.Errorf("创建日志记录失败: %w", err)
 	}
 
@@ -167,8 +163,6 @@ func (e *Executor) Run(taskID uint) error {
 
 	// Run sync in goroutine
 	go func() {
-		defer sourceDB.Close()
-		defer targetDB.Close()
 		defer e.running.Delete(taskID)
 		defer e.lastProgress.Delete(taskID)
 		defer func() {

@@ -41,10 +41,12 @@ func main() {
 	dsHandler := &handler.DataSourceHandler{Service: dsSvc}
 
 	taskSvc := &service.TaskService{DB: db}
+	pool := service.NewConnPool()
 	executor := &service.Executor{
 		DB:      db,
 		DSSvc:   dsSvc,
 		TaskSvc: taskSvc,
+		Pool:    pool,
 	}
 	scheduler := service.NewScheduler(db, executor)
 	scheduler.Start()
@@ -127,6 +129,7 @@ func main() {
 		// Task API routes
 		api.GET("/tasks/:id/mappings", taskHandler.Mappings)
 		api.PUT("/tasks/:id/mappings", taskHandler.SaveMappings)
+		api.GET("/tasks/:id/progress", taskHandler.ProgressSnapshot)
 		api.GET("/tasks/:id/progress/stream", taskHandler.ProgressStream)
 		api.GET("/tasks/:id/logs", logHandler.TaskLogs)
 	}
@@ -151,6 +154,7 @@ func main() {
 
 	log.Println("Shutting down server...")
 	scheduler.Stop()
+	pool.CloseAll()
 	if executor.CDCManager != nil {
 		executor.CDCManager.StopAll()
 	}
