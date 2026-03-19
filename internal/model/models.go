@@ -61,5 +61,10 @@ type SyncLog struct {
 	EndTime    *time.Time `json:"end_time"`
 	Status     string     `gorm:"size:20" json:"status"`
 	RowsSynced int64      `json:"rows_synced"`
-	ErrorMsg   string     `gorm:"type:text" json:"error_msg"`
+	ErrorMsg      string     `gorm:"type:text" json:"error_msg"`
+	SourceRows    int64      `gorm:"default:0" json:"source_rows"`
+	TargetRows    int64      `gorm:"default:0" json:"target_rows"`
+	SampleTotal   int        `gorm:"default:0" json:"sample_total"`
+	SampleMatched int        `gorm:"default:0" json:"sample_matched"`
+	QualityStatus string     `gorm:"size:20" json:"quality_status"` // passed|warning|failed|""
 }
