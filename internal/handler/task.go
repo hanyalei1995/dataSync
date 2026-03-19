@@ -85,8 +85,10 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	sourceMode := c.PostForm("source_mode")
 	if sourceMode == "existing" {
 		id, _ := strconv.ParseUint(c.PostForm("source_ds_id"), 10, 64)
-		uid := uint(id)
-		task.SourceDSID = &uid
+		if id > 0 {
+			uid := uint(id)
+			task.SourceDSID = &uid
+		}
 	} else {
 		srcPort, _ := strconv.Atoi(c.PostForm("source_port"))
 		cfg := map[string]interface{}{
@@ -105,8 +107,10 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	targetMode := c.PostForm("target_mode")
 	if targetMode == "existing" {
 		id, _ := strconv.ParseUint(c.PostForm("target_ds_id"), 10, 64)
-		uid := uint(id)
-		task.TargetDSID = &uid
+		if id > 0 {
+			uid := uint(id)
+			task.TargetDSID = &uid
+		}
 	} else {
 		tgtPort, _ := strconv.Atoi(c.PostForm("target_port"))
 		cfg := map[string]interface{}{
@@ -202,8 +206,12 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	sourceMode := c.PostForm("source_mode")
 	if sourceMode == "existing" {
 		sid, _ := strconv.ParseUint(c.PostForm("source_ds_id"), 10, 64)
-		uid := uint(sid)
-		task.SourceDSID = &uid
+		if sid > 0 {
+			uid := uint(sid)
+			task.SourceDSID = &uid
+		} else {
+			task.SourceDSID = nil
+		}
 		task.SourceConfig = ""
 	} else {
 		task.SourceDSID = nil
@@ -224,8 +232,12 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	targetMode := c.PostForm("target_mode")
 	if targetMode == "existing" {
 		tid, _ := strconv.ParseUint(c.PostForm("target_ds_id"), 10, 64)
-		uid := uint(tid)
-		task.TargetDSID = &uid
+		if tid > 0 {
+			uid := uint(tid)
+			task.TargetDSID = &uid
+		} else {
+			task.TargetDSID = nil
+		}
 		task.TargetConfig = ""
 	} else {
 		task.TargetDSID = nil

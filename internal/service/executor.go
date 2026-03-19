@@ -472,7 +472,7 @@ func (e *Executor) emit(taskID uint, ev ProgressEvent) {
 
 // resolveDataSource loads a DataSource from DB by ID or parses a JSON config string.
 func (e *Executor) resolveDataSource(dsID *uint, configJSON string) (model.DataSource, error) {
-	if dsID != nil {
+	if dsID != nil && *dsID > 0 {
 		ds, err := e.DSSvc.GetByID(*dsID)
 		if err != nil {
 			return model.DataSource{}, err
