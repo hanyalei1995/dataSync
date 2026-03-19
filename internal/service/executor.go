@@ -296,6 +296,30 @@ func (e *Executor) Run(taskID uint) error {
 			}
 		}
 
+		// Run quality check after successful data sync
+		if syncErr == nil && task.EnableQualityCheck && task.SyncType != "structure" {
+			qOpts := engine.QualityCheckOptions{
+				SourceDB:     sourceDB,
+				TargetDB:     targetDB,
+				SourceDBType: sourceDS.DBType,
+				TargetDBType: targetDS.DBType,
+				SourceTable:  task.SourceTable,
+				TargetTable:  task.TargetTable,
+				WhereClause:  buildWhereClause(task, sourceDS.DBType),
+				Mappings:     mappings,
+				SampleSize:   50,
+			}
+			if qRes, qErr := engine.CheckQuality(ctx, qOpts); qErr == nil {
+				e.DB.Model(&model.SyncLog{}).Where("id = ?", syncLog.ID).Updates(map[string]interface{}{
+					"source_rows":    qRes.SourceRows,
+					"target_rows":    qRes.TargetRows,
+					"sample_total":   qRes.SampleTotal,
+					"sample_matched": qRes.SampleMatched,
+					"quality_status": qRes.Status,
+				})
+			}
+		}
+
 		if syncErr != nil {
 			e.emit(taskID, ProgressEvent{Phase: "failed", Message: "同步失败", ErrorMsg: syncErr.Error()})
 		} else {
