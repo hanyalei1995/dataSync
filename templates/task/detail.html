@@ -121,6 +121,56 @@
     </div>
 </div>
 
+    <!-- Data Quality Card -->
+<div class="bg-white rounded-xl shadow p-6 mb-6">
+    <div class="flex justify-between items-center mb-4">
+        <h2 class="text-lg font-bold text-gray-800">数据校验</h2>
+        <button id="verify-btn"
+            class="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm hover:bg-indigo-700 transition">
+            立即校验
+        </button>
+    </div>
+
+    <div id="quality-result">
+    {{if .latestLog}}
+        {{if .latestLog.QualityStatus}}
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+            <div class="text-center p-3 bg-gray-50 rounded-lg">
+                <div class="text-xs text-gray-500 mb-1">源表行数</div>
+                <div class="text-lg font-bold text-gray-900">{{.latestLog.SourceRows}}</div>
+            </div>
+            <div class="text-center p-3 bg-gray-50 rounded-lg">
+                <div class="text-xs text-gray-500 mb-1">目标表行数</div>
+                <div class="text-lg font-bold text-gray-900">{{.latestLog.TargetRows}}</div>
+            </div>
+            <div class="text-center p-3 bg-gray-50 rounded-lg">
+                <div class="text-xs text-gray-500 mb-1">抽样匹配</div>
+                <div class="text-lg font-bold text-gray-900">{{.latestLog.SampleMatched}}/{{.latestLog.SampleTotal}}</div>
+            </div>
+            <div class="text-center p-3 rounded-lg
+                {{if eq .latestLog.QualityStatus "passed"}}bg-green-50
+                {{else if eq .latestLog.QualityStatus "warning"}}bg-yellow-50
+                {{else}}bg-red-50{{end}}">
+                <div class="text-xs text-gray-500 mb-1">校验结果</div>
+                <div class="text-lg font-bold
+                    {{if eq .latestLog.QualityStatus "passed"}}text-green-700
+                    {{else if eq .latestLog.QualityStatus "warning"}}text-yellow-700
+                    {{else}}text-red-700{{end}}">
+                    {{if eq .latestLog.QualityStatus "passed"}}✓ 通过
+                    {{else if eq .latestLog.QualityStatus "warning"}}⚠ 差异
+                    {{else}}✗ 不一致{{end}}
+                </div>
+            </div>
+        </div>
+        {{else}}
+        <p class="text-sm text-gray-400">尚无校验记录，点击「立即校验」运行</p>
+        {{end}}
+    {{else}}
+    <p class="text-sm text-gray-400">尚无同步记录</p>
+    {{end}}
+    </div>
+</div>
+
     <!-- Field Mappings -->
     <div class="bg-white rounded-xl shadow p-6 mb-6">
         <div class="flex justify-between items-center mb-4">
@@ -257,6 +307,44 @@ document.getElementById('auto-map-btn').addEventListener('click', function() {
         resultEl.innerHTML = '<span class="text-red-600">自动映射失败</span>';
     });
 });
+
+// ── Quality Verify ──────────────────────────────────────
+var verifyBtn = document.getElementById('verify-btn');
+if (verifyBtn) {
+    verifyBtn.addEventListener('click', function() {
+        verifyBtn.disabled = true;
+        verifyBtn.textContent = '校验中...';
+        fetch('/api/tasks/' + taskID + '/verify', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.error) {
+                    document.getElementById('quality-result').innerHTML =
+                        '<p class="text-sm text-red-600">' + data.error + '</p>';
+                    return;
+                }
+                var statusClass = data.status === 'passed' ? 'text-green-700' :
+                                  data.status === 'warning' ? 'text-yellow-700' : 'text-red-700';
+                var statusText = data.status === 'passed' ? '✓ 通过' :
+                                 data.status === 'warning' ? '⚠ 差异' : '✗ 不一致';
+                document.getElementById('quality-result').innerHTML =
+                    '<div class="grid grid-cols-2 md:grid-cols-4 gap-4">' +
+                    '<div class="text-center p-3 bg-gray-50 rounded-lg"><div class="text-xs text-gray-500 mb-1">源表行数</div><div class="text-lg font-bold">' + data.source_rows + '</div></div>' +
+                    '<div class="text-center p-3 bg-gray-50 rounded-lg"><div class="text-xs text-gray-500 mb-1">目标表行数</div><div class="text-lg font-bold">' + data.target_rows + '</div></div>' +
+                    '<div class="text-center p-3 bg-gray-50 rounded-lg"><div class="text-xs text-gray-500 mb-1">抽样匹配</div><div class="text-lg font-bold">' + data.sample_matched + '/' + data.sample_total + '</div></div>' +
+                    '<div class="text-center p-3 rounded-lg"><div class="text-xs text-gray-500 mb-1">校验结果</div><div class="text-lg font-bold ' + statusClass + '">' + statusText + '</div></div>' +
+                    '</div>';
+            })
+            .catch(function() {
+                document.getElementById('quality-result').innerHTML =
+                    '<p class="text-sm text-red-600">请求失败</p>';
+            })
+            .finally(function() {
+                verifyBtn.disabled = false;
+                verifyBtn.textContent = '立即校验';
+            });
+    });
+}
+// ── End Quality Verify ────────────────────────────────────
 
 // ── SSE Progress ──────────────────────────────────────────
 var taskStatus = "{{.task.Status}}";

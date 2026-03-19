@@ -280,6 +280,11 @@ func (h *TaskHandler) Detail(c *gin.Context) {
 	mappings, _ := h.TaskService.GetMappings(task.ID)
 	logs, _ := h.TaskService.GetLogs(task.ID, 10)
 
+	var latestLog *model.SyncLog
+	if len(logs) > 0 {
+		latestLog = &logs[0]
+	}
+
 	// Resolve datasource names
 	var sourceName, targetName string
 	if task.SourceDSID != nil {
@@ -302,6 +307,7 @@ func (h *TaskHandler) Detail(c *gin.Context) {
 		"task":       task,
 		"mappings":   mappings,
 		"logs":       logs,
+		"latestLog":  latestLog,
 		"sourceName": sourceName,
 		"targetName": targetName,
 		"username":   username,
