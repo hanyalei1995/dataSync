@@ -25,9 +25,17 @@
 </nav>
 
 <div class="max-w-7xl mx-auto px-4 py-8">
-    <div class="flex items-center mb-6">
-        <a href="/tasks" class="text-indigo-600 hover:underline mr-4">&larr; 返回</a>
-        <h1 class="text-2xl font-bold text-gray-800">任务详情</h1>
+    {{if .error}}
+    <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">{{.error}}</div>
+    {{end}}
+    <div class="flex items-center justify-between mb-6">
+        <div class="flex items-center">
+            <a href="/tasks" class="text-indigo-600 hover:underline mr-4">&larr; 返回</a>
+            <h1 class="text-2xl font-bold text-gray-800">任务详情</h1>
+        </div>
+        <form method="POST" action="/tasks/{{.task.ID}}/run">
+            <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition">立即运行</button>
+        </form>
     </div>
 
     <!-- Task Info Card -->
@@ -65,6 +73,35 @@
             </div>
         </div>
     </div>
+
+    <!-- Progress Panel (shown when running) -->
+<div id="progress-panel" class="bg-white rounded-xl shadow p-6 mb-6 hidden">
+    <h2 class="text-lg font-bold text-gray-800 mb-4">同步进度</h2>
+    <div class="space-y-3">
+        <div class="flex justify-between items-center text-sm text-gray-600">
+            <span id="progress-phase-label">准备中...</span>
+            <span id="progress-percent-label" class="font-semibold text-indigo-600">0%</span>
+        </div>
+        <!-- Determinate progress bar (data sync) -->
+        <div id="progress-bar-wrap" class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+            <div id="progress-bar-fill"
+                 class="h-4 rounded-full transition-all duration-300 bg-indigo-500"
+                 style="width: 0%"></div>
+        </div>
+        <!-- Indeterminate bar (structure sync / connecting) -->
+        <div id="progress-bar-indeterminate" class="hidden w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+            <div class="h-4 rounded-full bg-indigo-400 animate-pulse" style="width: 100%"></div>
+        </div>
+        <!-- Row counts (only shown during data sync) -->
+        <div id="progress-row-stats" class="hidden flex justify-between text-sm text-gray-600 pt-1">
+            <span>已同步：<strong id="stat-synced" class="text-gray-900">0</strong> 行</span>
+            <span>剩余：<strong id="stat-remaining" class="text-gray-900">0</strong> 行</span>
+            <span>总计：<strong id="stat-total" class="text-gray-900">0</strong> 行</span>
+        </div>
+        <!-- Error message -->
+        <div id="progress-error" class="hidden p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm"></div>
+    </div>
+</div>
 
     <!-- Field Mappings -->
     <div class="bg-white rounded-xl shadow p-6 mb-6">
@@ -202,6 +239,93 @@ document.getElementById('auto-map-btn').addEventListener('click', function() {
         resultEl.innerHTML = '<span class="text-red-600">自动映射失败</span>';
     });
 });
+
+// ── SSE Progress ──────────────────────────────────────────
+var taskStatus = "{{.task.Status}}";
+var progressES = null;
+
+function fmtNum(n) {
+    return Number(n).toLocaleString('zh-CN');
+}
+
+function updateProgress(ev) {
+    var panel = document.getElementById('progress-panel');
+    var barWrap = document.getElementById('progress-bar-wrap');
+    var barFill = document.getElementById('progress-bar-fill');
+    var barIndet = document.getElementById('progress-bar-indeterminate');
+    var phaseLabel = document.getElementById('progress-phase-label');
+    var pctLabel = document.getElementById('progress-percent-label');
+    var rowStats = document.getElementById('progress-row-stats');
+    var errDiv = document.getElementById('progress-error');
+
+    panel.classList.remove('hidden');
+
+    if (ev.phase === 'data') {
+        barWrap.classList.remove('hidden');
+        barIndet.classList.add('hidden');
+        var pct = ev.percent || 0;
+        barFill.style.width = pct.toFixed(1) + '%';
+        pctLabel.textContent = pct.toFixed(1) + '%';
+        if (ev.total_rows > 0) {
+            rowStats.classList.remove('hidden');
+            document.getElementById('stat-synced').textContent = fmtNum(ev.rows_synced);
+            document.getElementById('stat-remaining').textContent = fmtNum(ev.total_rows - ev.rows_synced);
+            document.getElementById('stat-total').textContent = fmtNum(ev.total_rows);
+        }
+    } else if (ev.phase === 'structure' || ev.phase === 'connecting') {
+        barWrap.classList.add('hidden');
+        barIndet.classList.remove('hidden');
+        rowStats.classList.add('hidden');
+        pctLabel.textContent = '';
+    } else if (ev.phase === 'done') {
+        barWrap.classList.remove('hidden');
+        barIndet.classList.add('hidden');
+        barFill.style.width = '100%';
+        barFill.classList.remove('bg-indigo-500');
+        barFill.classList.add('bg-green-500');
+        pctLabel.textContent = '100%';
+    } else if (ev.phase === 'failed') {
+        barWrap.classList.add('hidden');
+        barIndet.classList.add('hidden');
+        pctLabel.textContent = '';
+        errDiv.classList.remove('hidden');
+        errDiv.textContent = ev.error_msg || '同步失败';
+    }
+
+    phaseLabel.textContent = ev.message || '';
+}
+
+function connectProgressStream() {
+    if (progressES) return;
+    progressES = new EventSource('/api/tasks/' + taskID + '/progress/stream');
+    progressES.onmessage = function(e) {
+        var ev = JSON.parse(e.data);
+        updateProgress(ev);
+        if (ev.phase === 'done' || ev.phase === 'failed') {
+            progressES.close();
+            progressES = null;
+            setTimeout(function() { window.location.reload(); }, 1500);
+        }
+    };
+    progressES.onerror = function() {
+        progressES.close();
+        progressES = null;
+    };
+}
+
+// Auto-connect if task is already running on page load
+if (taskStatus === 'running') {
+    connectProgressStream();
+}
+
+// Connect SSE after clicking 立即运行
+var runForm = document.querySelector('form[action$="/run"]');
+if (runForm) {
+    runForm.addEventListener('submit', function() {
+        setTimeout(connectProgressStream, 500);
+    });
+}
+// ── End SSE Progress ──────────────────────────────────────
 </script>
 </body>
 </html>
