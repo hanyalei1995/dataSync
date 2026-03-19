@@ -54,8 +54,13 @@
                 <p class="font-medium text-gray-900">{{.task.Name}}</p>
             </div>
             <div>
+                {{if eq .task.SyncType "sql_import"}}
+                <span class="text-xs text-gray-500">源 SQL</span>
+                <pre class="mt-1 text-xs font-mono bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre-wrap break-all">{{.task.SourceSQL}}</pre>
+                {{else}}
                 <span class="text-sm text-gray-500">源端</span>
                 <p class="font-medium text-gray-900">{{.sourceName}} / {{.task.SourceTable}}</p>
+                {{end}}
             </div>
             <div>
                 <span class="text-sm text-gray-500">目标端</span>
