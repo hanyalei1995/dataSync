@@ -273,6 +273,32 @@ func (e *Executor) Run(taskID uint) error {
 					rowsSynced = result.RowsSynced
 				}
 			}
+		case "sql_import":
+			e.emit(taskID, ProgressEvent{Phase: "data", Message: "正在执行 SQL 导入..."})
+			opts := engine.DataSyncOptions{
+				Source:      sourceDB,
+				Target:      targetDB,
+				SourceSQL:   task.SourceSQL,
+				TargetTable: task.TargetTable,
+				BatchSize:   1000,
+				OnProgress:  makeOnProgress(),
+				Concurrency: 1,
+				StartOffset: task.CheckpointOffset,
+				OnCheckpoint: func(offset int64) {
+					e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).
+						Update("checkpoint_offset", offset)
+				},
+			}
+			if task.SyncMode == "upsert" {
+				opts.WriteStrategy = "upsert"
+			} else {
+				opts.WriteStrategy = "insert"
+			}
+			var result *engine.SyncResult
+			result, syncErr = engine.SyncData(ctx, opts)
+			if result != nil {
+				rowsSynced = result.RowsSynced
+			}
 		default:
 			syncErr = fmt.Errorf("未知同步类型: %s", task.SyncType)
 		}
