@@ -139,6 +139,7 @@ func main() {
 		api.GET("/tasks/:id/progress/stream", taskHandler.ProgressStream)
 		api.POST("/tasks/:id/verify", taskHandler.Verify)
 		api.GET("/tasks/:id/logs", logHandler.TaskLogs)
+		api.POST("/upload", dsHandler.Upload)
 	}
 
 	srv := &http.Server{

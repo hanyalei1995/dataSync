@@ -1,10 +1,12 @@
 package handler
 
 import (
-	"datasync/internal/engine"
+	"datasync/internal/connector"
 	"datasync/internal/model"
 	"datasync/internal/service"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -119,12 +121,45 @@ func (h *DataSourceHandler) TestConn(c *gin.Context) {
 		Username:     c.PostForm("username"),
 		Password:     c.PostForm("password"),
 		DatabaseName: c.PostForm("database_name"),
+		ExtraParams:  c.PostForm("extra_params"),
 	}
-	if err := engine.TestConnection(ds); err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+	conn, err := connector.FromDataSource(ds)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "连接成功"})
+	defer conn.Close()
+	if err := conn.Ping(c.Request.Context()); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// Upload saves an uploaded file to ./uploads/ and returns the file path.
+func (h *DataSourceHandler) Upload(c *gin.Context) {
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	defer file.Close()
+	if err := os.MkdirAll("./uploads", 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	dst := "./uploads/" + header.Filename
+	out, err := os.Create(dst)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, file); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"path": dst})
 }
 
 func (h *DataSourceHandler) Tables(c *gin.Context) {

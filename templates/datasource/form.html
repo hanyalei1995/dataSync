@@ -50,43 +50,63 @@
                     <option value="mysql" {{if and .datasource (eq .datasource.DBType "mysql")}}selected{{end}}>MySQL</option>
                     <option value="postgresql" {{if and .datasource (eq .datasource.DBType "postgresql")}}selected{{end}}>PostgreSQL</option>
                     <option value="oracle" {{if and .datasource (eq .datasource.DBType "oracle")}}selected{{end}}>Oracle</option>
+                    <option value="clickhouse" {{if and .datasource (eq .datasource.DBType "clickhouse")}}selected{{end}}>ClickHouse</option>
+                    <option value="doris" {{if and .datasource (eq .datasource.DBType "doris")}}selected{{end}}>Doris (Apache)</option>
+                    <option value="mongodb" {{if and .datasource (eq .datasource.DBType "mongodb")}}selected{{end}}>MongoDB</option>
+                    <option value="csv" {{if and .datasource (eq .datasource.DBType "csv")}}selected{{end}}>CSV 文件</option>
+                    <option value="excel" {{if and .datasource (eq .datasource.DBType "excel")}}selected{{end}}>Excel 文件</option>
                 </select>
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-2 gap-4 field-std">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">主机</label>
-                    <input type="text" name="host" value="{{if .datasource}}{{.datasource.Host}}{{end}}" required
+                    <input type="text" name="host" value="{{if .datasource}}{{.datasource.Host}}{{end}}"
                         class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">端口</label>
-                    <input type="number" name="port" value="{{if .datasource}}{{.datasource.Port}}{{end}}" required
+                    <input type="number" name="port" value="{{if .datasource}}{{.datasource.Port}}{{end}}"
                         class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
                 </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-2 gap-4 field-std">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
-                    <input type="text" name="username" value="{{if .datasource}}{{.datasource.Username}}{{end}}" required
+                    <input type="text" name="username" value="{{if .datasource}}{{.datasource.Username}}{{end}}"
                         class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">密码</label>
-                    <input type="password" name="password" value="{{if .datasource}}{{.datasource.Password}}{{end}}" required
+                    <input type="password" name="password" value="{{if .datasource}}{{.datasource.Password}}{{end}}"
                         class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
                 </div>
             </div>
 
-            <div>
+            <div class="field-std">
                 <label class="block text-sm font-medium text-gray-700 mb-1">数据库名</label>
-                <input type="text" name="database_name" value="{{if .datasource}}{{.datasource.DatabaseName}}{{end}}" required
+                <input type="text" name="database_name" value="{{if .datasource}}{{.datasource.DatabaseName}}{{end}}"
                     class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
             </div>
 
+            <!-- 文件类型专用字段 -->
+            <div id="field-file" style="display:none" class="col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">文件路径
+                    <span class="text-xs text-gray-400 ml-1">（填写服务器路径 或 点击上传）</span>
+                </label>
+                <div class="flex gap-2">
+                    <input type="text" name="host" id="file-path-input" placeholder="/data/users.csv"
+                        class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500">
+                    <label class="cursor-pointer bg-indigo-50 border border-indigo-200 text-indigo-700 px-3 py-2 rounded-lg text-sm hover:bg-indigo-100 transition">
+                        上传文件
+                        <input type="file" id="file-upload-input" accept=".csv,.xlsx,.xls" class="hidden" onchange="uploadFile(this)">
+                    </label>
+                </div>
+            </div>
+
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">额外参数</label>
+                <label class="block text-sm font-medium text-gray-700 mb-1" id="extra-label">额外参数</label>
                 <input type="text" name="extra_params" value="{{if .datasource}}{{.datasource.ExtraParams}}{{end}}"
                     class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                     placeholder="可选">
@@ -115,15 +135,52 @@ document.getElementById('test-btn').addEventListener('click', function() {
     .then(function(r) { return r.json(); })
     .then(function(data) {
         if (data.success) {
-            resultEl.innerHTML = '<span class="text-green-600">' + data.message + '</span>';
+            resultEl.innerHTML = '<span class="text-green-600">连接成功</span>';
         } else {
-            resultEl.innerHTML = '<span class="text-red-600">' + data.message + '</span>';
+            resultEl.innerHTML = '<span class="text-red-600">' + (data.error || data.message) + '</span>';
         }
     })
     .catch(function(err) {
         resultEl.innerHTML = '<span class="text-red-600">请求失败</span>';
     });
 });
+
+function updateDSFields() {
+    var t = document.getElementById('db_type') ? document.getElementById('db_type').value : '';
+    var isFile = (t === 'csv' || t === 'excel');
+    var isMongo = (t === 'mongodb');
+    // 标准字段（host/port/user/pass/db）
+    var stdFields = document.querySelectorAll('.field-std');
+    stdFields.forEach(function(el) { el.style.display = isFile ? 'none' : ''; });
+    // 文件字段
+    var fileField = document.getElementById('field-file');
+    if (fileField) fileField.style.display = isFile ? '' : 'none';
+    // MongoDB extra 字段提示改为 Auth DB
+    var extraLabel = document.getElementById('extra-label');
+    if (extraLabel) extraLabel.textContent = isMongo ? 'Auth Database' : '额外参数';
+}
+
+function uploadFile(input) {
+    if (!input.files || !input.files[0]) return;
+    var fd = new FormData();
+    fd.append('file', input.files[0]);
+    fetch('/api/upload', { method: 'POST', body: fd })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.path) {
+                var pathInput = document.getElementById('file-path-input');
+                if (pathInput) pathInput.value = d.path;
+            }
+        })
+        .catch(function(e) { alert('上传失败: ' + e.message); });
+}
+
+// 页面加载时初始化
+var dbTypeSelect = document.getElementById('db_type');
+if (dbTypeSelect) {
+    dbTypeSelect.addEventListener('change', updateDSFields);
+    updateDSFields();
+}
 </script>
 </body>
 </html>
