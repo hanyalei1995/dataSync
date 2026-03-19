@@ -43,6 +43,7 @@ type SyncTask struct {
 	Concurrency        int       `gorm:"default:1" json:"concurrency"`
 	EnableQualityCheck bool      `gorm:"default:true" json:"enable_quality_check"`
 	CheckpointOffset   int64     `gorm:"default:0" json:"checkpoint_offset"`
+	SourceSQL          string    `gorm:"type:text" json:"source_sql"`
 	CreatedBy          uint      `json:"created_by"`
 	CreatedAt    time.Time `json:"created_at"`
 }
