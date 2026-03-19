@@ -8,31 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestBuildBatchSelectSQL_MySQL(t *testing.T) {
-	sql := buildBatchSelectSQL("mysql", "users", []string{"id", "name"}, 0, 100, "")
-	assert.Contains(t, sql, "SELECT")
-	assert.Contains(t, sql, "`id`")
-	assert.Contains(t, sql, "`name`")
-	assert.Contains(t, sql, "`users`")
-	assert.Contains(t, sql, "LIMIT 100 OFFSET 0")
-}
-
-func TestBuildBatchSelectSQL_PostgreSQL(t *testing.T) {
-	sql := buildBatchSelectSQL("postgresql", "users", []string{"id", "name"}, 50, 100, "")
-	assert.Contains(t, sql, "SELECT")
-	assert.Contains(t, sql, "\"id\"")
-	assert.Contains(t, sql, "\"name\"")
-	assert.Contains(t, sql, "\"users\"")
-	assert.Contains(t, sql, "LIMIT 100 OFFSET 50")
-}
-
-func TestBuildBatchSelectSQL_Oracle(t *testing.T) {
-	sql := buildBatchSelectSQL("oracle", "users", []string{"id", "name"}, 0, 100, "")
-	assert.Contains(t, sql, "SELECT")
-	assert.Contains(t, sql, "ROWNUM")
-	assert.Contains(t, sql, "\"ID\"")
-	assert.Contains(t, sql, "\"NAME\"")
-}
 
 func TestBuildInsertSQL_MySQL(t *testing.T) {
 	sql := buildInsertSQL("mysql", "users", []string{"id", "name", "email"}, 2)

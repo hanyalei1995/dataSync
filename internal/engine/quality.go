@@ -233,6 +233,66 @@ func rowsMatch(a, b []interface{}) bool {
 }
 
 // determineQualityStatus derives the overall status from row count and sample results.
+// buildCountSQL builds a COUNT query with an optional WHERE clause (used by quality checks).
+func buildCountSQL(dbType, table, whereClause string) string {
+	q := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(dbType, table))
+	if whereClause != "" {
+		q += " WHERE " + whereClause
+	}
+	return q
+}
+
+// detectIntPK returns the name of a single integer primary key column from a *sql.DB, or "".
+func detectIntPK(db *sql.DB, dbType, table string) string {
+	schema, err := ReadTableSchema(db, dbType, table)
+	if err != nil {
+		return ""
+	}
+	for _, col := range schema.Columns {
+		if !col.IsPrimary {
+			continue
+		}
+		t := strings.ToLower(col.Type)
+		if strings.Contains(t, "int") || strings.Contains(t, "serial") || strings.Contains(t, "number") {
+			return col.Name
+		}
+	}
+	return ""
+}
+
+// getSourceColumns queries column names from the source database when no mappings are provided.
+func getSourceColumns(db *sql.DB, dbType, table string) ([]string, error) {
+	schema, err := ReadTableSchema(db, dbType, table)
+	if err != nil {
+		return nil, err
+	}
+	cols := make([]string, 0, len(schema.Columns))
+	for _, c := range schema.Columns {
+		cols = append(cols, c.Name)
+	}
+	return cols, nil
+}
+
+// scanRows reads all rows from a sql.Rows result set into a slice of value slices.
+func scanRows(rows *sql.Rows, colCount int) ([][]interface{}, error) {
+	var batch [][]interface{}
+	for rows.Next() {
+		values := make([]interface{}, colCount)
+		ptrs := make([]interface{}, colCount)
+		for i := range values {
+			ptrs[i] = &values[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		batch = append(batch, values)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return batch, nil
+}
+
 func determineQualityStatus(r *QualityCheckResult) string {
 	// Row count check
 	if r.SourceRows > 0 {

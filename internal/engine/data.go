@@ -2,7 +2,7 @@ package engine
 
 import (
 	"context"
-	"database/sql"
+	"datasync/internal/connector"
 	"datasync/internal/model"
 	"fmt"
 	"strings"
@@ -13,10 +13,8 @@ import (
 
 // DataSyncOptions configures a full table data sync operation.
 type DataSyncOptions struct {
-	SourceDB      *sql.DB
-	TargetDB      *sql.DB
-	SourceDBType  string
-	TargetDBType  string
+	Source        connector.Connector
+	Target        connector.Connector
 	SourceTable   string
 	TargetTable   string
 	Mappings      []model.FieldMapping
@@ -24,7 +22,9 @@ type DataSyncOptions struct {
 	WriteStrategy string // "insert" or "upsert"
 	OnProgress    func(synced, total int64)
 	WhereClause   string
-	Concurrency   int // 0 or 1 = serial (default); >1 = parallel shards
+	Concurrency   int    // 0 or 1 = serial (default); >1 = parallel shards
+	StartOffset   int64  // 断点续传起始 offset
+	OnCheckpoint  func(int64) // 每批完成后回调，保存 checkpoint
 }
 
 // SyncResult holds the outcome of a data sync operation.
@@ -53,40 +53,45 @@ func SyncData(ctx context.Context, opts DataSyncOptions) (*SyncResult, error) {
 	}
 
 	// Count source rows
-	var totalRows int64
-	countSQL := buildCountSQL(opts.SourceDBType, opts.SourceTable, opts.WhereClause)
-	if err := opts.SourceDB.QueryRowContext(ctx, countSQL).Scan(&totalRows); err != nil {
+	totalRows, err := opts.Source.CountRows(ctx, opts.SourceTable, opts.WhereClause)
+	if err != nil {
 		return nil, fmt.Errorf("count source rows: %w", err)
 	}
 
 	// Determine column lists from mappings (enabled only)
 	sourceCols, targetCols := columnsFromMappings(opts.Mappings)
 	if len(sourceCols) == 0 {
-		// No mappings provided — query columns from source DB
-		cols, err := getSourceColumns(opts.SourceDB, opts.SourceDBType, opts.SourceTable)
+		// No mappings provided — query columns from source via Connector
+		schema, err := opts.Source.GetSchema(ctx, opts.SourceTable)
 		if err != nil {
 			return nil, fmt.Errorf("get source columns: %w", err)
 		}
-		sourceCols = cols
-		targetCols = cols
+		for _, c := range schema.Columns {
+			sourceCols = append(sourceCols, c.Name)
+			targetCols = append(targetCols, c.Name)
+		}
 	}
 
 	// For upsert strategy, we need primary key columns of the target table
 	var pkColumns []string
 	if opts.WriteStrategy == "upsert" {
-		var err error
-		pkColumns, err = getPrimaryKeyColumns(opts.TargetDB, opts.TargetDBType, opts.TargetTable)
+		schema, err := opts.Target.GetSchema(ctx, opts.TargetTable)
 		if err != nil {
 			return nil, fmt.Errorf("get primary key columns: %w", err)
+		}
+		for _, col := range schema.Columns {
+			if col.IsPrimary {
+				pkColumns = append(pkColumns, col.Name)
+			}
 		}
 		if len(pkColumns) == 0 {
 			return nil, fmt.Errorf("upsert requires primary key columns but none found on target table %s", opts.TargetTable)
 		}
 	}
 
-	// Batch loop
+	// Batch loop — start from StartOffset for resume support
 	var rowsSynced int64
-	for offset := int64(0); offset < totalRows; offset += int64(opts.BatchSize) {
+	for offset := opts.StartOffset; offset < totalRows; offset += int64(opts.BatchSize) {
 		// Check for cancellation
 		select {
 		case <-ctx.Done():
@@ -99,29 +104,45 @@ func SyncData(ctx context.Context, opts DataSyncOptions) (*SyncResult, error) {
 		}
 
 		// Read batch from source
-		selectSQL := buildBatchSelectSQL(opts.SourceDBType, opts.SourceTable, sourceCols, offset, int64(opts.BatchSize), opts.WhereClause)
-		rows, err := opts.SourceDB.QueryContext(ctx, selectSQL)
+		batch, err := opts.Source.ReadBatch(ctx, connector.ReadOptions{
+			Table:   opts.SourceTable,
+			Columns: sourceCols,
+			Where:   opts.WhereClause,
+			Offset:  offset,
+			Limit:   int64(opts.BatchSize),
+		})
 		if err != nil {
-			return nil, fmt.Errorf("query source batch at offset %d: %w", offset, err)
-		}
-
-		// Collect batch rows
-		batch, err := scanRows(rows, len(sourceCols))
-		rows.Close()
-		if err != nil {
-			return nil, fmt.Errorf("scan source batch at offset %d: %w", offset, err)
+			return nil, fmt.Errorf("read source batch at offset %d: %w", offset, err)
 		}
 
 		if len(batch) == 0 {
 			break
 		}
 
+		// Remap column names from source to target
+		rows := remapColumns(batch, sourceCols, targetCols)
+
 		// Write batch to target
-		if err := writeBatch(ctx, opts, targetCols, pkColumns, batch); err != nil {
+		writeStrategy := connector.StrategyInsert
+		if opts.WriteStrategy == "upsert" {
+			writeStrategy = connector.StrategyUpsert
+		}
+		if err := opts.Target.WriteBatch(ctx, connector.WriteOptions{
+			Table:    opts.TargetTable,
+			Columns:  targetCols,
+			Rows:     rows,
+			Strategy: writeStrategy,
+			PKCols:   pkColumns,
+		}); err != nil {
 			return nil, fmt.Errorf("write batch at offset %d: %w", offset, err)
 		}
 
 		rowsSynced += int64(len(batch))
+
+		// Report checkpoint
+		if opts.OnCheckpoint != nil {
+			opts.OnCheckpoint(offset + int64(len(batch)))
+		}
 
 		// Report progress
 		if opts.OnProgress != nil {
@@ -151,53 +172,19 @@ func columnsFromMappings(mappings []model.FieldMapping) (sourceCols, targetCols 
 	return
 }
 
-// getSourceColumns queries column names from the source database when no mappings are provided.
-func getSourceColumns(db *sql.DB, dbType, table string) ([]string, error) {
-	schema, err := ReadTableSchema(db, dbType, table)
-	if err != nil {
-		return nil, err
+// remapColumns replaces source column names with target column names in each row.
+func remapColumns(rows []connector.Row, srcCols, tgtCols []string) []connector.Row {
+	result := make([]connector.Row, len(rows))
+	for i, row := range rows {
+		newRow := make(connector.Row, len(row))
+		for j, src := range srcCols {
+			if j < len(tgtCols) {
+				newRow[tgtCols[j]] = row[src]
+			}
+		}
+		result[i] = newRow
 	}
-	cols := make([]string, 0, len(schema.Columns))
-	for _, c := range schema.Columns {
-		cols = append(cols, c.Name)
-	}
-	return cols, nil
-}
-
-// buildCountSQL builds a COUNT query with an optional WHERE clause.
-func buildCountSQL(dbType, table, whereClause string) string {
-	q := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(dbType, table))
-	if whereClause != "" {
-		q += " WHERE " + whereClause
-	}
-	return q
-}
-
-// buildBatchSelectSQL builds a paginated SELECT statement for the given database type.
-func buildBatchSelectSQL(dbType, table string, columns []string, offset, limit int64, whereClause string) string {
-	quotedCols := make([]string, len(columns))
-	for i, c := range columns {
-		quotedCols[i] = quoteIdentifier(dbType, c)
-	}
-	colList := strings.Join(quotedCols, ", ")
-	tbl := quoteIdentifier(dbType, table)
-
-	whereFragment := ""
-	if whereClause != "" {
-		whereFragment = " WHERE " + whereClause
-	}
-
-	switch strings.ToLower(dbType) {
-	case "oracle":
-		// Oracle ROWNUM-based pagination
-		return fmt.Sprintf(
-			"SELECT %s FROM (SELECT a.*, ROWNUM rn FROM (SELECT %s FROM %s%s) a WHERE ROWNUM <= %d) WHERE rn > %d",
-			colList, colList, tbl, whereFragment, offset+limit, offset,
-		)
-	default:
-		// MySQL and PostgreSQL both support LIMIT/OFFSET
-		return fmt.Sprintf("SELECT %s FROM %s%s LIMIT %d OFFSET %d", colList, tbl, whereFragment, limit, offset)
-	}
+	return result
 }
 
 // buildInsertSQL builds a batch INSERT statement for the target database.
@@ -307,8 +294,6 @@ func buildUpsertSQL(dbType, table string, columns, pkColumns []string, rowCount 
 
 	default:
 		// Oracle MERGE INTO (single row at a time for simplicity)
-		// For batch, we generate a MERGE for each row
-		// Returning single-row MERGE template; caller handles iteration
 		srcCols := make([]string, len(columns))
 		for i := range columns {
 			srcCols[i] = fmt.Sprintf(":%d AS %s", i+1, quoteIdentifier(dbType, columns[i]))
@@ -346,21 +331,6 @@ func buildUpsertSQL(dbType, table string, columns, pkColumns []string, rowCount 
 	}
 }
 
-// getPrimaryKeyColumns returns the primary key column names for a table.
-func getPrimaryKeyColumns(db *sql.DB, dbType, table string) ([]string, error) {
-	schema, err := ReadTableSchema(db, dbType, table)
-	if err != nil {
-		return nil, err
-	}
-	var pks []string
-	for _, col := range schema.Columns {
-		if col.IsPrimary {
-			pks = append(pks, col.Name)
-		}
-	}
-	return pks, nil
-}
-
 // buildPlaceholderRow builds a comma-separated list of placeholders for one row.
 // startIdx is the 0-based index of the first parameter in this row.
 func buildPlaceholderRow(dbType string, colCount, startIdx int) string {
@@ -382,89 +352,9 @@ func buildPlaceholderRow(dbType string, colCount, startIdx int) string {
 	return strings.Join(parts, ", ")
 }
 
-// scanRows reads all rows from a result set into a slice of value slices.
-func scanRows(rows *sql.Rows, colCount int) ([][]interface{}, error) {
-	var batch [][]interface{}
-	for rows.Next() {
-		values := make([]interface{}, colCount)
-		ptrs := make([]interface{}, colCount)
-		for i := range values {
-			ptrs[i] = &values[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return nil, err
-		}
-		batch = append(batch, values)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return batch, nil
-}
-
-// writeBatch writes a batch of rows to the target database.
-func writeBatch(ctx context.Context, opts DataSyncOptions, targetCols, pkColumns []string, batch [][]interface{}) error {
-	dbType := strings.ToLower(opts.TargetDBType)
-
-	// Oracle upsert uses MERGE which is single-row, handle separately
-	if dbType == "oracle" && opts.WriteStrategy == "upsert" {
-		return writeOracleUpsertBatch(ctx, opts, targetCols, pkColumns, batch)
-	}
-
-	// Oracle insert with multiple rows uses INSERT ALL, handle separately
-	if dbType == "oracle" && len(batch) > 1 {
-		return writeOracleInsertBatch(ctx, opts, targetCols, batch)
-	}
-
-	// Build the SQL for the full batch
-	var sqlStr string
-	if opts.WriteStrategy == "upsert" {
-		sqlStr = buildUpsertSQL(opts.TargetDBType, opts.TargetTable, targetCols, pkColumns, len(batch))
-	} else {
-		sqlStr = buildInsertSQL(opts.TargetDBType, opts.TargetTable, targetCols, len(batch))
-	}
-
-	// Flatten batch values into a single args slice
-	args := make([]interface{}, 0, len(batch)*len(targetCols))
-	for _, row := range batch {
-		args = append(args, row...)
-	}
-
-	_, err := opts.TargetDB.ExecContext(ctx, sqlStr, args...)
-	return err
-}
-
-// writeOracleInsertBatch handles Oracle multi-row INSERT ALL.
-func writeOracleInsertBatch(ctx context.Context, opts DataSyncOptions, targetCols []string, batch [][]interface{}) error {
-	sqlStr := buildInsertSQL(opts.TargetDBType, opts.TargetTable, targetCols, len(batch))
-	args := make([]interface{}, 0, len(batch)*len(targetCols))
-	for _, row := range batch {
-		args = append(args, row...)
-	}
-	_, err := opts.TargetDB.ExecContext(ctx, sqlStr, args...)
-	return err
-}
-
-// writeOracleUpsertBatch handles Oracle MERGE INTO one row at a time.
-func writeOracleUpsertBatch(ctx context.Context, opts DataSyncOptions, targetCols, pkColumns []string, batch [][]interface{}) error {
-	mergeSQL := buildUpsertSQL(opts.TargetDBType, opts.TargetTable, targetCols, pkColumns, 1)
-	stmt, err := opts.TargetDB.PrepareContext(ctx, mergeSQL)
-	if err != nil {
-		return fmt.Errorf("prepare oracle merge: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, row := range batch {
-		if _, err := stmt.ExecContext(ctx, row...); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// detectIntPK returns the name of a single integer primary key column, or "".
-func detectIntPK(db *sql.DB, dbType, table string) string {
-	schema, err := ReadTableSchema(db, dbType, table)
+// detectIntPKFromConnector returns the name of a single integer primary key column, or "".
+func detectIntPKFromConnector(ctx context.Context, src connector.Connector, table string) string {
+	schema, err := src.GetSchema(ctx, table)
 	if err != nil {
 		return ""
 	}
@@ -481,16 +371,24 @@ func detectIntPK(db *sql.DB, dbType, table string) string {
 }
 
 // syncDataParallel runs SyncData using N concurrent goroutines, each handling a shard.
-// If an integer PK exists, uses range-based sharding. Otherwise falls back to serial.
+// If an integer PK exists on a SQLConnector source, uses range-based sharding. Otherwise falls back to serial.
 func syncDataParallel(ctx context.Context, opts DataSyncOptions) (*SyncResult, error) {
 	start := time.Now()
 	n := opts.Concurrency
 
-	pkCol := detectIntPK(opts.SourceDB, opts.SourceDBType, opts.SourceTable)
+	pkCol := detectIntPKFromConnector(ctx, opts.Source, opts.SourceTable)
 
 	if pkCol != "" {
-		// Range-based sharding on integer PK
-		quotedPK := quoteIdentifier(opts.SourceDBType, pkCol)
+		// Range-based sharding on integer PK — only possible with a SQL backend
+		sqlSrc, ok := opts.Source.(*connector.SQLConnector)
+		if !ok {
+			// Non-SQL connector: fall back to serial
+			opts.Concurrency = 1
+			return SyncData(ctx, opts)
+		}
+
+		dbType := opts.Source.DBType()
+		quotedPK := quoteIdentifier(dbType, pkCol)
 
 		baseWhere := ""
 		if opts.WhereClause != "" {
@@ -498,10 +396,10 @@ func syncDataParallel(ctx context.Context, opts DataSyncOptions) (*SyncResult, e
 		}
 
 		var minVal, maxVal int64
-		row := opts.SourceDB.QueryRowContext(ctx,
+		row := sqlSrc.RawDB().QueryRowContext(ctx,
 			fmt.Sprintf("SELECT COALESCE(MIN(%s),0), COALESCE(MAX(%s),0) FROM %s%s",
 				quotedPK, quotedPK,
-				quoteIdentifier(opts.SourceDBType, opts.SourceTable), baseWhere))
+				quoteIdentifier(dbType, opts.SourceTable), baseWhere))
 		if err := row.Scan(&minVal, &maxVal); err != nil || maxVal == 0 {
 			// Fallback to serial
 			opts.Concurrency = 1
@@ -528,8 +426,8 @@ func syncDataParallel(ctx context.Context, opts DataSyncOptions) (*SyncResult, e
 		// Query total rows for progress reporting
 		var totalRows int64
 		countSQL := fmt.Sprintf("SELECT COUNT(*) FROM %s%s",
-			quoteIdentifier(opts.SourceDBType, opts.SourceTable), baseWhere)
-		_ = opts.SourceDB.QueryRowContext(ctx, countSQL).Scan(&totalRows)
+			quoteIdentifier(dbType, opts.SourceTable), baseWhere)
+		_ = sqlSrc.RawDB().QueryRowContext(ctx, countSQL).Scan(&totalRows)
 
 		return runShards(ctx, opts, shards, start, totalRows)
 	}
