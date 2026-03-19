@@ -83,36 +83,47 @@
                     <div id="source_manual" class="space-y-3 hidden">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">数据库类型</label>
-                            <select name="source_db_type" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            <select name="source_db_type" id="source_db_type" onchange="updateManualFields('source')" class="w-full border border-gray-300 rounded-lg px-3 py-2">
                                 <option value="">请选择</option>
                                 <option value="mysql">MySQL</option>
                                 <option value="postgresql">PostgreSQL</option>
                                 <option value="oracle">Oracle</option>
+                                <option value="clickhouse">ClickHouse</option>
+                                <option value="doris">Doris (Apache)</option>
+                                <option value="mongodb">MongoDB</option>
+                                <option value="csv">CSV 文件</option>
+                                <option value="excel">Excel 文件</option>
                             </select>
                         </div>
-                        <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">主机</label>
-                                <input type="text" name="source_host" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                        <div id="source_std_fields">
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">主机</label>
+                                    <input type="text" name="source_host" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">端口</label>
+                                    <input type="number" name="source_port" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                </div>
                             </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">端口</label>
-                                <input type="number" name="source_port" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            <div class="grid grid-cols-2 gap-3 mt-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+                                    <input type="text" name="source_username" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">密码</label>
+                                    <input type="password" name="source_password" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">数据库名</label>
+                                <input type="text" name="source_database_name" class="w-full border border-gray-300 rounded-lg px-3 py-2">
                             </div>
                         </div>
-                        <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
-                                <input type="text" name="source_username" class="w-full border border-gray-300 rounded-lg px-3 py-2">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">密码</label>
-                                <input type="password" name="source_password" class="w-full border border-gray-300 rounded-lg px-3 py-2">
-                            </div>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">数据库名</label>
-                            <input type="text" name="source_database_name" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                        <div id="source_file_fields" class="hidden">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">文件路径</label>
+                            <input type="text" name="source_host" placeholder="/data/users.csv" class="w-full border border-gray-300 rounded-lg px-3 py-2">
                         </div>
                     </div>
 
@@ -160,36 +171,47 @@
                     <div id="target_manual" class="space-y-3 hidden">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">数据库类型</label>
-                            <select name="target_db_type" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            <select name="target_db_type" id="target_db_type" onchange="updateManualFields('target')" class="w-full border border-gray-300 rounded-lg px-3 py-2">
                                 <option value="">请选择</option>
                                 <option value="mysql">MySQL</option>
                                 <option value="postgresql">PostgreSQL</option>
                                 <option value="oracle">Oracle</option>
+                                <option value="clickhouse">ClickHouse</option>
+                                <option value="doris">Doris (Apache)</option>
+                                <option value="mongodb">MongoDB</option>
+                                <option value="csv">CSV 文件</option>
+                                <option value="excel">Excel 文件</option>
                             </select>
                         </div>
-                        <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">主机</label>
-                                <input type="text" name="target_host" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                        <div id="target_std_fields">
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">主机</label>
+                                    <input type="text" name="target_host" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">端口</label>
+                                    <input type="number" name="target_port" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                </div>
                             </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">端口</label>
-                                <input type="number" name="target_port" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            <div class="grid grid-cols-2 gap-3 mt-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+                                    <input type="text" name="target_username" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">密码</label>
+                                    <input type="password" name="target_password" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">数据库名</label>
+                                <input type="text" name="target_database_name" class="w-full border border-gray-300 rounded-lg px-3 py-2">
                             </div>
                         </div>
-                        <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
-                                <input type="text" name="target_username" class="w-full border border-gray-300 rounded-lg px-3 py-2">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">密码</label>
-                                <input type="password" name="target_password" class="w-full border border-gray-300 rounded-lg px-3 py-2">
-                            </div>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">数据库名</label>
-                            <input type="text" name="target_database_name" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                        <div id="target_file_fields" class="hidden">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">文件路径</label>
+                            <input type="text" name="target_host" placeholder="/data/output.csv" class="w-full border border-gray-300 rounded-lg px-3 py-2">
                         </div>
                     </div>
 
@@ -348,11 +370,13 @@ document.getElementById('sync_mode').addEventListener('change', function() {
 var tsSrcDS = new TomSelect('#source_ds_id', {
     placeholder: '请选择数据源',
     allowEmptyOption: true,
+    dropdownParent: 'body',
     onChange: function(value) { loadTables(value, tsSrcTable); }
 });
 var tsTgtDS = new TomSelect('#target_ds_id', {
     placeholder: '请选择数据源',
     allowEmptyOption: true,
+    dropdownParent: 'body',
     onChange: function(value) { loadTables(value, tsTgtTable); }
 });
 
@@ -360,11 +384,13 @@ var tsTgtDS = new TomSelect('#target_ds_id', {
 var tsSrcTable = new TomSelect('#source_table', {
     placeholder: '请先选择数据源',
     allowEmptyOption: true,
+    dropdownParent: 'body',
     create: false
 });
 var tsTgtTable = new TomSelect('#target_table', {
     placeholder: '请先选择数据源',
     allowEmptyOption: true,
+    dropdownParent: 'body',
     create: false
 });
 
@@ -424,6 +450,14 @@ if (toggleBtn) {
         filterBody.classList.toggle('hidden', !hidden);
         toggleIcon.style.transform = hidden ? 'rotate(90deg)' : '';
     });
+}
+
+// Toggle manual connection fields based on db type
+function updateManualFields(side) {
+    var t = document.getElementById(side + '_db_type').value;
+    var isFile = (t === 'csv' || t === 'excel');
+    document.getElementById(side + '_std_fields').classList.toggle('hidden', isFile);
+    document.getElementById(side + '_file_fields').classList.toggle('hidden', !isFile);
 }
 
 // Toggle watermark fields
