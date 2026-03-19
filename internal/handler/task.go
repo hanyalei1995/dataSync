@@ -518,14 +518,12 @@ func (h *TaskHandler) Verify(c *gin.Context) {
 
 	mappings, _ := h.TaskService.GetMappings(taskID)
 	qOpts := engine.QualityCheckOptions{
-		SourceDB:     sourceDB,
-		TargetDB:     targetDB,
-		SourceDBType: sourceDS.DBType,
-		TargetDBType: targetDS.DBType,
-		SourceTable:  task.SourceTable,
-		TargetTable:  task.TargetTable,
-		Mappings:     mappings,
-		SampleSize:   50,
+		Source:      sourceDB,
+		Target:      targetDB,
+		SourceTable: task.SourceTable,
+		TargetTable: task.TargetTable,
+		Mappings:    mappings,
+		SampleSize:  50,
 	}
 
 	qRes, err := engine.CheckQuality(c.Request.Context(), qOpts)
