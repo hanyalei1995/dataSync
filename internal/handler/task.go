@@ -87,10 +87,11 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		uid := uint(id)
 		task.SourceDSID = &uid
 	} else {
+		srcPort, _ := strconv.Atoi(c.PostForm("source_port"))
 		cfg := map[string]interface{}{
 			"db_type":       c.PostForm("source_db_type"),
 			"host":          c.PostForm("source_host"),
-			"port":          c.PostForm("source_port"),
+			"port":          srcPort,
 			"username":      c.PostForm("source_username"),
 			"password":      c.PostForm("source_password"),
 			"database_name": c.PostForm("source_database_name"),
@@ -106,10 +107,11 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		uid := uint(id)
 		task.TargetDSID = &uid
 	} else {
+		tgtPort, _ := strconv.Atoi(c.PostForm("target_port"))
 		cfg := map[string]interface{}{
 			"db_type":       c.PostForm("target_db_type"),
 			"host":          c.PostForm("target_host"),
-			"port":          c.PostForm("target_port"),
+			"port":          tgtPort,
 			"username":      c.PostForm("target_username"),
 			"password":      c.PostForm("target_password"),
 			"database_name": c.PostForm("target_database_name"),
@@ -203,10 +205,11 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		task.SourceConfig = ""
 	} else {
 		task.SourceDSID = nil
+		srcPort, _ := strconv.Atoi(c.PostForm("source_port"))
 		cfg := map[string]interface{}{
 			"db_type":       c.PostForm("source_db_type"),
 			"host":          c.PostForm("source_host"),
-			"port":          c.PostForm("source_port"),
+			"port":          srcPort,
 			"username":      c.PostForm("source_username"),
 			"password":      c.PostForm("source_password"),
 			"database_name": c.PostForm("source_database_name"),
@@ -224,10 +227,11 @@ func (h *TaskHandler) Update(c *gin.Context) {
 		task.TargetConfig = ""
 	} else {
 		task.TargetDSID = nil
+		tgtPort, _ := strconv.Atoi(c.PostForm("target_port"))
 		cfg := map[string]interface{}{
 			"db_type":       c.PostForm("target_db_type"),
 			"host":          c.PostForm("target_host"),
-			"port":          c.PostForm("target_port"),
+			"port":          tgtPort,
 			"username":      c.PostForm("target_username"),
 			"password":      c.PostForm("target_password"),
 			"database_name": c.PostForm("target_database_name"),
