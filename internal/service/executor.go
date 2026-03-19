@@ -292,6 +292,17 @@ func (e *Executor) Stop(taskID uint) error {
 	}
 
 	e.running.Delete(taskID)
+
+	// Close progress channel for CDC tasks (non-CDC goroutine handles its own close via defer)
+	if val, ok := e.progress.LoadAndDelete(taskID); ok {
+		ch := val.(chan ProgressEvent)
+		select {
+		case ch <- ProgressEvent{Phase: "done", Message: "任务已手动停止"}:
+		default:
+		}
+		close(ch)
+	}
+
 	e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).Update("status", "idle")
 	return nil
 }
