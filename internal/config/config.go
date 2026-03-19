@@ -10,7 +10,7 @@ type Config struct {
 
 func Default() *Config {
 	return &Config{
-		Port:      8080,
+		Port:      9090,
 		DBPath:    "datasync.db",
 		JWTSecret: "change-me-in-production",
 		AdminUser: "admin",

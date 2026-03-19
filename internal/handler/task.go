@@ -405,6 +405,18 @@ func (h *TaskHandler) Stop(c *gin.Context) {
 	c.Redirect(http.StatusFound, "/tasks/"+c.Param("id"))
 }
 
+// Reset forcibly resets a stuck task's status to idle without going through Executor.Stop.
+// Used when a task is in "running" state but no goroutine is actually driving it.
+func (h *TaskHandler) Reset(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	taskID := uint(id)
+
+	// Clean up any executor state just in case
+	h.Executor.ForceReset(taskID)
+
+	c.Redirect(http.StatusFound, "/tasks/"+c.Param("id"))
+}
+
 // ProgressSnapshot returns the latest progress event for a task as JSON (for polling).
 func (h *TaskHandler) ProgressSnapshot(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)

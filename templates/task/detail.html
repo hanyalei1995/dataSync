@@ -33,9 +33,17 @@
             <a href="/tasks" class="text-indigo-600 hover:underline mr-4">&larr; 返回</a>
             <h1 class="text-2xl font-bold text-gray-800">任务详情</h1>
         </div>
-        <form method="POST" action="/tasks/{{.task.ID}}/run">
-            <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition">立即运行</button>
-        </form>
+        <div class="flex gap-2">
+            {{if eq .task.Status "running"}}
+            <form method="POST" action="/tasks/{{.task.ID}}/reset" onsubmit="return confirm('强制重置会将任务状态恢复为空闲，确认继续？')">
+                <button type="submit" class="bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600 transition">强制重置</button>
+            </form>
+            {{else}}
+            <form method="POST" action="/tasks/{{.task.ID}}/run">
+                <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition">立即运行</button>
+            </form>
+            {{end}}
+        </div>
     </div>
 
     <!-- Task Info Card -->

@@ -1,3 +1,7 @@
 datasync
+datasync-linux
+datasync.exe
 datasync.db
+datasync.db-shm
+datasync.db-wal
 .DS_Store

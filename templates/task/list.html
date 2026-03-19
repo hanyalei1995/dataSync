@@ -57,16 +57,27 @@
                     </td>
                     <td class="px-6 py-4 text-sm text-gray-600">{{.SyncType}}</td>
                     <td class="px-6 py-4 text-sm text-gray-600">{{.SyncMode}}</td>
-                    <td class="px-6 py-4 text-sm">
+                    <td class="px-6 py-4 text-sm" id="status-cell-{{.ID}}">
                         <span class="px-2 py-1 rounded-full text-xs font-medium
                             {{if eq .Status "idle"}}bg-gray-100 text-gray-800
                             {{else if eq .Status "running"}}bg-blue-100 text-blue-800
                             {{else if eq .Status "error"}}bg-red-100 text-red-800
                             {{else}}bg-gray-100 text-gray-800{{end}}">{{.Status}}</span>
+                        {{if eq .Status "running"}}
+                        <div id="progress-mini-{{.ID}}" class="mt-1.5 space-y-0.5">
+                            <div class="w-32 bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                                <div id="progress-mini-bar-{{.ID}}" class="h-1.5 rounded-full bg-indigo-500 transition-all duration-500" style="width:0%"></div>
+                            </div>
+                            <div id="progress-mini-text-{{.ID}}" class="text-xs text-gray-500"></div>
+                        </div>
+                        {{end}}
                     </td>
                     <td class="px-6 py-4 text-sm space-x-2">
                         <a href="/tasks/{{.ID}}" class="text-blue-600 hover:underline">详情</a>
                         <a href="/tasks/{{.ID}}/edit" class="text-indigo-600 hover:underline">编辑</a>
+                        <form method="POST" action="/tasks/{{.ID}}/run" class="inline">
+                            <button type="submit" class="text-green-600 hover:underline">运行</button>
+                        </form>
                         <form method="POST" action="/tasks/{{.ID}}/delete" class="inline" onsubmit="return confirm('确定删除？')">
                             <button type="submit" class="text-red-600 hover:underline">删除</button>
                         </form>
@@ -81,6 +92,51 @@
         </table>
     </div>
 </div>
+
+<script>
+// Poll progress for all running tasks every 2 seconds
+var runningTaskIDs = [
+    {{range .tasks}}{{if eq .Status "running"}}{{.ID}},{{end}}{{end}}
+];
+
+function pollProgress(taskID) {
+    fetch('/api/tasks/' + taskID + '/progress')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.running || !data.progress) return;
+            var p = data.progress;
+            var bar = document.getElementById('progress-mini-bar-' + taskID);
+            var txt = document.getElementById('progress-mini-text-' + taskID);
+            if (!bar || !txt) return;
+
+            if (p.phase === 'data' && p.total_rows > 0) {
+                var pct = p.percent || 0;
+                bar.style.width = pct.toFixed(0) + '%';
+                txt.textContent = pct.toFixed(0) + '% · ' +
+                    Number(p.rows_synced).toLocaleString('zh-CN') + '/' +
+                    Number(p.total_rows).toLocaleString('zh-CN') + ' 行';
+            } else if (p.phase === 'structure' || p.phase === 'connecting') {
+                bar.classList.remove('bg-indigo-500');
+                bar.classList.add('bg-indigo-300', 'animate-pulse');
+                bar.style.width = '100%';
+                txt.textContent = p.message || '同步中...';
+            } else if (p.phase === 'done' || p.phase === 'failed') {
+                // Task finished — reload to update status
+                window.location.reload();
+            }
+        })
+        .catch(function() {});
+}
+
+if (runningTaskIDs.length > 0) {
+    // Initial poll immediately
+    runningTaskIDs.forEach(function(id) { pollProgress(id); });
+    // Then every 2 seconds
+    setInterval(function() {
+        runningTaskIDs.forEach(function(id) { pollProgress(id); });
+    }, 2000);
+}
+</script>
 </body>
 </html>
 {{end}}

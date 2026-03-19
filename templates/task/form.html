@@ -231,9 +231,9 @@
             <div class="grid grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">并发分片数
-                        <span class="text-xs text-gray-400 ml-1">（1=串行，2-8=并发，大表提速）</span>
+                        <span class="text-xs text-gray-400 ml-1">（1=串行，2+=并发，大表提速）</span>
                     </label>
-                    <input type="number" name="concurrency" min="1" max="8"
+                    <input type="number" name="concurrency" min="1" max="128"
                         value="{{if and .task .task.Concurrency}}{{.task.Concurrency}}{{else}}1{{end}}"
                         class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
                 </div>

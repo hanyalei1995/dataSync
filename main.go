@@ -6,6 +6,7 @@ import (
 	"datasync/internal/database"
 	"datasync/internal/handler"
 	"datasync/internal/middleware"
+	"datasync/internal/model"
 	"datasync/internal/service"
 	"embed"
 	"fmt"
@@ -41,6 +42,10 @@ func main() {
 	dsHandler := &handler.DataSourceHandler{Service: dsSvc}
 
 	taskSvc := &service.TaskService{DB: db}
+
+	// Reset tasks stuck in "running" state from a previous crashed/killed process.
+	db.Model(&model.SyncTask{}).Where("status = ?", "running").Update("status", "idle")
+
 	pool := service.NewConnPool()
 	executor := &service.Executor{
 		DB:      db,
@@ -114,6 +119,7 @@ func main() {
 		protected.POST("/tasks/:id/delete", taskHandler.Delete)
 		protected.POST("/tasks/:id/run", taskHandler.Run)
 		protected.POST("/tasks/:id/stop", taskHandler.Stop)
+		protected.POST("/tasks/:id/reset", taskHandler.Reset)
 
 		// Log routes
 		protected.GET("/logs", logHandler.List)

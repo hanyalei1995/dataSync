@@ -525,7 +525,13 @@ func syncDataParallel(ctx context.Context, opts DataSyncOptions) (*SyncResult, e
 			shards = append(shards, clause)
 		}
 
-		return runShards(ctx, opts, shards, start)
+		// Query total rows for progress reporting
+		var totalRows int64
+		countSQL := fmt.Sprintf("SELECT COUNT(*) FROM %s%s",
+			quoteIdentifier(opts.SourceDBType, opts.SourceTable), baseWhere)
+		_ = opts.SourceDB.QueryRowContext(ctx, countSQL).Scan(&totalRows)
+
+		return runShards(ctx, opts, shards, start, totalRows)
 	}
 
 	// No integer PK — fall back to serial to avoid duplicate rows
@@ -534,14 +540,25 @@ func syncDataParallel(ctx context.Context, opts DataSyncOptions) (*SyncResult, e
 }
 
 // runShards executes each WHERE-clause shard concurrently and merges results.
-func runShards(ctx context.Context, opts DataSyncOptions, shards []string, start time.Time) (*SyncResult, error) {
+// totalRows is the full row count used for progress reporting (0 means unknown).
+func runShards(ctx context.Context, opts DataSyncOptions, shards []string, start time.Time, totalRows int64) (*SyncResult, error) {
 	type shardResult struct {
 		rows int64
 		err  error
 	}
-	results := make([]shardResult, len(shards))
+	n := len(shards)
+	results := make([]shardResult, n)
+
+	// Per-shard in-progress row counters for real-time aggregated progress.
+	shardProgress := make([]int64, n)
+
+	// Create a cancellable child context so a failing shard cancels the rest.
+	shardCtx, cancelShards := context.WithCancel(ctx)
+	defer cancelShards()
+
 	var wg sync.WaitGroup
-	var totalSynced int64
+	var firstErr error
+	var errOnce sync.Once
 
 	for i, clause := range shards {
 		wg.Add(1)
@@ -550,25 +567,51 @@ func runShards(ctx context.Context, opts DataSyncOptions, shards []string, start
 			shardOpts := opts
 			shardOpts.Concurrency = 1
 			shardOpts.WhereClause = whereClause
-			shardOpts.OnProgress = nil
-			res, err := SyncData(ctx, shardOpts)
+			// Each shard updates its own slot; the callback sums all slots.
+			shardOpts.OnProgress = func(synced, _ int64) {
+				atomic.StoreInt64(&shardProgress[idx], synced)
+				if opts.OnProgress == nil {
+					return
+				}
+				var current int64
+				for j := 0; j < n; j++ {
+					current += atomic.LoadInt64(&shardProgress[j])
+				}
+				opts.OnProgress(current, totalRows)
+			}
+			res, err := SyncData(shardCtx, shardOpts)
 			if err != nil {
+				errOnce.Do(func() {
+					firstErr = err
+					cancelShards()
+				})
 				results[idx] = shardResult{err: err}
 				return
 			}
+			// Mark shard as fully done in the progress slot.
+			atomic.StoreInt64(&shardProgress[idx], res.RowsSynced)
 			results[idx] = shardResult{rows: res.RowsSynced}
-			current := atomic.AddInt64(&totalSynced, res.RowsSynced)
+			// Emit one final aggregated update for this shard.
 			if opts.OnProgress != nil {
-				opts.OnProgress(current, 0)
+				var current int64
+				for j := 0; j < n; j++ {
+					current += atomic.LoadInt64(&shardProgress[j])
+				}
+				opts.OnProgress(current, totalRows)
 			}
 		}(i, clause)
 	}
 	wg.Wait()
 
+	var totalSynced int64
 	for _, r := range results {
-		if r.err != nil {
-			return &SyncResult{RowsSynced: atomic.LoadInt64(&totalSynced), Duration: time.Since(start)}, r.err
+		if r.err != nil && firstErr == nil {
+			firstErr = r.err
 		}
+		totalSynced += r.rows
 	}
-	return &SyncResult{RowsSynced: atomic.LoadInt64(&totalSynced), Duration: time.Since(start)}, nil
+	if firstErr != nil {
+		return &SyncResult{RowsSynced: totalSynced, Duration: time.Since(start)}, firstErr
+	}
+	return &SyncResult{RowsSynced: totalSynced, Duration: time.Since(start)}, nil
 }

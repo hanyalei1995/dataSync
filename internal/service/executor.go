@@ -371,6 +371,24 @@ func (e *Executor) Stop(taskID uint) error {
 	return nil
 }
 
+// ForceReset clears all in-memory executor state for a task and resets its DB status to idle.
+// Use this to recover tasks stuck in "running" state with no active goroutine.
+func (e *Executor) ForceReset(taskID uint) {
+	if val, ok := e.running.LoadAndDelete(taskID); ok {
+		cancel := val.(context.CancelFunc)
+		cancel()
+	}
+	if e.CDCManager != nil {
+		_ = e.CDCManager.StopListener(taskID)
+	}
+	if val, ok := e.progress.LoadAndDelete(taskID); ok {
+		ch := val.(chan ProgressEvent)
+		close(ch)
+	}
+	e.lastProgress.Delete(taskID)
+	e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).Update("status", "idle")
+}
+
 // Subscribe returns the progress channel for a running task.
 func (e *Executor) Subscribe(taskID uint) (<-chan ProgressEvent, bool) {
 	val, ok := e.progress.Load(taskID)
