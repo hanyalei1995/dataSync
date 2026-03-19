@@ -35,8 +35,12 @@ type SyncTask struct {
 	SyncType     string    `gorm:"size:20" json:"sync_type"`
 	SyncMode     string    `gorm:"size:20" json:"sync_mode"`
 	CronExpr     string    `gorm:"size:100" json:"cron_expr"`
-	Status       string    `gorm:"size:20;default:idle" json:"status"`
-	CreatedBy    uint      `json:"created_by"`
+	Status             string    `gorm:"size:20;default:idle" json:"status"`
+	FilterCondition    string    `gorm:"type:text" json:"filter_condition"`
+	WatermarkColumn    string    `gorm:"size:200" json:"watermark_column"`
+	WatermarkType      string    `gorm:"size:20" json:"watermark_type"`
+	LastWatermarkValue string    `gorm:"size:500" json:"last_watermark_value"`
+	CreatedBy          uint      `json:"created_by"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
