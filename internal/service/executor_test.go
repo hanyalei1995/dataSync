@@ -39,3 +39,10 @@ func TestExportFilePathAt_ChangesAcrossRuns(t *testing.T) {
 
 	assert.NotEqual(t, first, second)
 }
+
+func TestResolveDefaultFileTarget_ReturnsCsvDataSource(t *testing.T) {
+	got := resolveDefaultFileTarget()
+
+	assert.Equal(t, "csv", got.DBType)
+	assert.Equal(t, "", got.Host)
+}

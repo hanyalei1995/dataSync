@@ -112,9 +112,14 @@ func (e *Executor) Run(taskID uint, triggeredBy string, runParams map[string]str
 	if err != nil {
 		return fmt.Errorf("解析源数据源失败: %w", err)
 	}
-	targetDS, err := e.resolveDataSource(task.TargetDSID, task.TargetConfig)
-	if err != nil {
-		return fmt.Errorf("解析目标数据源失败: %w", err)
+	var targetDS model.DataSource
+	if task.SyncType == "sql_import" && (task.TargetDSID == nil || *task.TargetDSID == 0) && task.TargetConfig == "" {
+		targetDS = resolveDefaultFileTarget()
+	} else {
+		targetDS, err = e.resolveDataSource(task.TargetDSID, task.TargetConfig)
+		if err != nil {
+			return fmt.Errorf("解析目标数据源失败: %w", err)
+		}
 	}
 
 	// Connect to source and target
@@ -122,9 +127,18 @@ func (e *Executor) Run(taskID uint, triggeredBy string, runParams map[string]str
 	if err != nil {
 		return fmt.Errorf("连接源数据库失败: %w", err)
 	}
-	targetDB, err := e.Pool.Get(targetDS)
-	if err != nil {
-		return fmt.Errorf("连接目标数据库失败: %w", err)
+	var targetDB connector.Connector
+	if targetDS.DBType == "csv" || targetDS.DBType == "excel" {
+		genPath := exportFilePath(targetDS.Host, task.Name, targetDS.DBType)
+		targetDB, err = connector.NewFileConnectorWithType(genPath, strings.ToLower(targetDS.DBType))
+		if err != nil {
+			return fmt.Errorf("创建文件连接器失败: %w", err)
+		}
+	} else {
+		targetDB, err = e.Pool.Get(targetDS)
+		if err != nil {
+			return fmt.Errorf("连接目标数据库失败: %w", err)
+		}
 	}
 
 	// Handle realtime CDC mode
@@ -559,6 +573,13 @@ func (e *Executor) resolveDataSource(dsID *uint, configJSON string) (model.DataS
 		return ds, nil
 	}
 	return model.DataSource{}, fmt.Errorf("未指定数据源")
+}
+
+// resolveDefaultFileTarget returns a bare csv DataSource used when a
+// sql_import task has no target configured. The executor generates a
+// timestamped output path at run time.
+func resolveDefaultFileTarget() model.DataSource {
+	return model.DataSource{DBType: "csv", Host: ""}
 }
 
 // buildWhereClause assembles the SQL WHERE clause (without the WHERE keyword)
