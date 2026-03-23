@@ -60,25 +60,25 @@
         <form id="results-query-form" class="space-y-4">
             <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 {{range .params}}
-                <div>
+                <div data-required="{{if .Required}}true{{else}}false{{end}}">
                     <label class="block text-sm font-medium text-gray-700 mb-1">{{.Label}}{{if .Required}}<span class="text-red-500 ml-1">*</span>{{end}}</label>
                     {{if eq .InputType "textarea"}}
-                    <textarea name="{{.Name}}" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="{{.HelpText}}">{{.DefaultValue}}</textarea>
+                    <textarea name="{{.Name}}" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm {{if and .Required (eq .DefaultValue "")}}ring-2 ring-red-300 border-red-300{{end}}" placeholder="{{.HelpText}}">{{.DefaultValue}}</textarea>
                     {{else if eq .InputType "select"}}
-                    <select name="{{.Name}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    <select name="{{.Name}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm {{if and .Required (eq .DefaultValue "")}}ring-2 ring-red-300 border-red-300{{end}}">
                         <option value="">请选择</option>
                         {{range .Options}}
                         <option value="{{.Value}}">{{.Label}}</option>
                         {{end}}
                     </select>
                     {{else if eq .InputType "number"}}
-                    <input type="number" name="{{.Name}}" value="{{.DefaultValue}}" placeholder="{{.HelpText}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    <input type="number" name="{{.Name}}" value="{{.DefaultValue}}" placeholder="{{.HelpText}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm {{if and .Required (eq .DefaultValue "")}}ring-2 ring-red-300 border-red-300{{end}}">
                     {{else if eq .InputType "date"}}
-                    <input type="date" name="{{.Name}}" value="{{.DefaultValue}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    <input type="date" name="{{.Name}}" value="{{.DefaultValue}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm {{if and .Required (eq .DefaultValue "")}}ring-2 ring-red-300 border-red-300{{end}}">
                     {{else if eq .InputType "datetime"}}
-                    <input type="datetime-local" name="{{.Name}}" value="{{.DefaultValue}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    <input type="datetime-local" name="{{.Name}}" value="{{.DefaultValue}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm {{if and .Required (eq .DefaultValue "")}}ring-2 ring-red-300 border-red-300{{end}}">
                     {{else}}
-                    <input type="text" name="{{.Name}}" value="{{.DefaultValue}}" placeholder="{{.HelpText}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    <input type="text" name="{{.Name}}" value="{{.DefaultValue}}" placeholder="{{.HelpText}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm {{if and .Required (eq .DefaultValue "")}}ring-2 ring-red-300 border-red-300{{end}}">
                     {{end}}
                     {{if .HelpText}}
                     <p class="mt-1 text-xs text-gray-400">{{.HelpText}}</p>
@@ -268,8 +268,24 @@ document.getElementById('page_size').addEventListener('change', function() {
     loadResults(1);
 });
 
+function hasUnfilledRequiredParams() {
+    var fields = document.querySelectorAll('#results-query-form [name]');
+    for (var i = 0; i < fields.length; i++) {
+        var field = fields[i];
+        var name = field.getAttribute('name');
+        if (name === 'page_size') continue;
+        var isRequired = field.closest('[data-required="true"]') !== null;
+        if (isRequired && field.value.trim() === '') return true;
+    }
+    return false;
+}
+
 applyURLState();
-loadResults(currentPage);
+if (hasUnfilledRequiredParams()) {
+    document.getElementById('results-summary').textContent = '请填写必填参数后点击查询';
+} else {
+    loadResults(currentPage);
+}
 </script>
 </body>
 </html>
