@@ -134,6 +134,24 @@ func TestTaskFormKeepsDatasourceNativeSelectElements(t *testing.T) {
 	}
 }
 
+func TestTaskFormShowsLiveParamCount(t *testing.T) {
+	content, err := os.ReadFile("templates/task/form.html")
+	if err != nil {
+		t.Fatalf("read template: %v", err)
+	}
+	src := string(content)
+
+	required := []string{
+		"id=\"sql_param_count_badge\"",
+		"updateParamCountBadge",
+	}
+	for _, needle := range required {
+		if !strings.Contains(src, needle) {
+			t.Fatalf("expected form to include %q", needle)
+		}
+	}
+}
+
 func TestTaskFormShowsOptionalHintForSQLImportTarget(t *testing.T) {
 	content, err := os.ReadFile("templates/task/form.html")
 	if err != nil {

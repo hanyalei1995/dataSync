@@ -168,6 +168,7 @@
                         <label class="block text-sm font-medium text-gray-700 mb-1">
                             源 SQL
                             <span class="text-xs text-gray-400 ml-1">（查询结果将分批写入目标表）</span>
+                            <span id="sql_param_count_badge" class="hidden px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-medium ml-1"></span>
                         </label>
                         <textarea name="source_sql" id="source_sql" rows="6"
                             placeholder="SELECT id, name, amount FROM orders WHERE status = 'paid'"
@@ -826,8 +827,28 @@ if (enableWm) {
     });
 }
 
+function updateParamCountBadge() {
+    var sql = document.getElementById('source_sql');
+    var badge = document.getElementById('sql_param_count_badge');
+    if (!sql || !badge) return;
+    var matches = (sql.value || '').match(/\{\{[A-Za-z][A-Za-z0-9_]*\}\}/g) || [];
+    var unique = new Set(matches.map(function(m) { return m.slice(2, -2); }));
+    if (unique.size === 0) {
+        badge.classList.add('hidden');
+    } else {
+        badge.classList.remove('hidden');
+        badge.textContent = '已识别 ' + unique.size + ' 个参数';
+    }
+}
+
 document.getElementById('detect_sql_params_btn').addEventListener('click', syncSQLParamStateFromSQL);
 document.getElementById('source_sql').addEventListener('change', syncSQLParamStateFromSQL);
+
+var sqlTextarea = document.getElementById('source_sql');
+if (sqlTextarea) {
+    sqlTextarea.addEventListener('input', updateParamCountBadge);
+    updateParamCountBadge();
+}
 document.getElementById('sql_params_rows').addEventListener('input', updateSQLParamField);
 document.getElementById('sql_params_rows').addEventListener('change', updateSQLParamField);
 document.querySelector('form').addEventListener('submit', function() {
