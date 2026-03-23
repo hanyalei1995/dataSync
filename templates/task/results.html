@@ -1,0 +1,276 @@
+{{define "task_results"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataSync - 实时结果</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+<nav class="bg-white shadow">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+        <a href="/" class="text-xl font-bold text-indigo-600">DataSync</a>
+        <div class="flex items-center gap-6">
+            <a href="/" class="text-sm text-gray-600 hover:text-indigo-600">仪表盘</a>
+            <a href="/datasources" class="text-sm text-gray-600 hover:text-indigo-600">数据源</a>
+            <a href="/tasks" class="text-sm text-indigo-600 font-medium">同步任务</a>
+            <a href="/logs" class="text-sm text-gray-600 hover:text-indigo-600">执行日志</a>
+            <span class="text-gray-400">|</span>
+            <span class="text-gray-600 text-sm">{{.username}}</span>
+            <a href="/logout" class="text-sm text-red-500 hover:underline">登出</a>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <div class="flex items-center gap-4 mb-6">
+        <a href="/tasks/{{.task.ID}}" class="text-indigo-600 hover:underline">&larr; 返回任务详情</a>
+        <h1 class="text-2xl font-bold text-gray-800">任务执行结果</h1>
+    </div>
+
+    <div class="bg-white rounded-xl shadow p-6 mb-6">
+        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div>
+                <div class="text-sm text-gray-500">任务名称</div>
+                <div class="mt-1 font-medium text-gray-900">{{.task.Name}}</div>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">源端</div>
+                <div class="mt-1 font-medium text-gray-900">{{.sourceName}}</div>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">目标端</div>
+                <div class="mt-1 font-medium text-gray-900">
+                    {{.targetName}}{{if .task.TargetTable}} / {{.task.TargetTable}}{{end}}
+                </div>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">同步类型</div>
+                <div class="mt-1 font-medium text-gray-900">{{.task.SyncType}}</div>
+            </div>
+        </div>
+        <div class="mt-4">
+            <div class="text-sm text-gray-500">源 SQL</div>
+            <pre class="mt-1 text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-3 whitespace-pre-wrap break-all">{{.task.SourceSQL}}</pre>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-xl shadow p-6 mb-6">
+        <form id="results-query-form" class="space-y-4">
+            <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                {{range .params}}
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{{.Label}}{{if .Required}}<span class="text-red-500 ml-1">*</span>{{end}}</label>
+                    {{if eq .InputType "textarea"}}
+                    <textarea name="{{.Name}}" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="{{.HelpText}}">{{.DefaultValue}}</textarea>
+                    {{else if eq .InputType "select"}}
+                    <select name="{{.Name}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                        <option value="">请选择</option>
+                        {{range .Options}}
+                        <option value="{{.Value}}">{{.Label}}</option>
+                        {{end}}
+                    </select>
+                    {{else if eq .InputType "number"}}
+                    <input type="number" name="{{.Name}}" value="{{.DefaultValue}}" placeholder="{{.HelpText}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    {{else if eq .InputType "date"}}
+                    <input type="date" name="{{.Name}}" value="{{.DefaultValue}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    {{else if eq .InputType "datetime"}}
+                    <input type="datetime-local" name="{{.Name}}" value="{{.DefaultValue}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    {{else}}
+                    <input type="text" name="{{.Name}}" value="{{.DefaultValue}}" placeholder="{{.HelpText}}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    {{end}}
+                    {{if .HelpText}}
+                    <p class="mt-1 text-xs text-gray-400">{{.HelpText}}</p>
+                    {{end}}
+                </div>
+                {{end}}
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">每页条数</label>
+                    <select id="page_size" name="page_size" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                        {{range .pageSizeOptions}}
+                        <option value="{{.}}">{{.}}</option>
+                        {{end}}
+                    </select>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+                <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition text-sm">查询</button>
+                <button type="button" onclick="exportResults('csv')" class="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition text-sm">导出 CSV</button>
+                <button type="button" onclick="exportResults('excel')" class="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-700 transition text-sm">导出 Excel</button>
+                <span id="results-error" class="hidden text-sm text-red-600"></span>
+            </div>
+        </form>
+    </div>
+
+    <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-4">
+            <div id="results-summary" class="text-sm text-gray-600">准备查询...</div>
+            <div class="flex items-center gap-2">
+                <button id="results-prev" type="button" class="px-3 py-1.5 text-sm rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40" onclick="loadResults(currentPage - 1)">上一页</button>
+                <span id="results-page-label" class="text-sm text-gray-500">第 1 页</span>
+                <button id="results-next" type="button" class="px-3 py-1.5 text-sm rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40" onclick="loadResults(currentPage + 1)">下一页</button>
+            </div>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead id="results-table-head" class="bg-gray-50 sticky top-0 z-10"></thead>
+                <tbody id="results-table-body" class="divide-y divide-gray-200 bg-white"></tbody>
+            </table>
+            <div id="results-empty-state" class="hidden px-6 py-10 text-center text-sm text-gray-400">当前条件下无数据</div>
+        </div>
+    </div>
+</div>
+
+<script>
+var taskID = {{.task.ID}};
+var currentPage = 1;
+var currentPageSize = Number(document.getElementById('page_size').value || 50);
+var totalRows = 0;
+
+function escapeHTML(value) {
+    return String(value == null ? '' : value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function formatCellValue(value) {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+}
+
+function applyURLState() {
+    var params = new URLSearchParams(window.location.search);
+    params.forEach(function(value, key) {
+        var field = document.querySelector('#results-query-form [name="' + key + '"]');
+        if (field) field.value = value;
+    });
+    currentPage = Number(params.get('page') || 1);
+    currentPageSize = Number(params.get('page_size') || document.getElementById('page_size').value || 50);
+    document.getElementById('page_size').value = String(currentPageSize);
+}
+
+function buildQueryString(page) {
+    currentPage = Math.max(page || 1, 1);
+    currentPageSize = Number(document.getElementById('page_size').value || 50);
+    var formData = new FormData(document.getElementById('results-query-form'));
+    var params = new URLSearchParams();
+    formData.forEach(function(value, key) {
+        if (value !== '') params.set(key, value);
+    });
+    params.set('page', String(currentPage));
+    params.set('page_size', String(currentPageSize));
+    window.history.replaceState({}, '', window.location.pathname + '?' + params.toString());
+    return params;
+}
+
+function renderResults(data) {
+    totalRows = Number(data.total || 0);
+    var head = document.getElementById('results-table-head');
+    var body = document.getElementById('results-table-body');
+    var empty = document.getElementById('results-empty-state');
+    var summary = document.getElementById('results-summary');
+    var pageLabel = document.getElementById('results-page-label');
+    var prevBtn = document.getElementById('results-prev');
+    var nextBtn = document.getElementById('results-next');
+
+    var columns = data.columns || [];
+    var rows = data.rows || [];
+    head.innerHTML = '<tr>' + columns.map(function(col) {
+        return '<th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">' + escapeHTML(col) + '</th>';
+    }).join('') + '</tr>';
+
+    body.innerHTML = rows.map(function(row) {
+        return '<tr>' + columns.map(function(col) {
+            var value = formatCellValue(row[col]);
+            return '<td class="px-4 py-3 text-sm text-gray-700 max-w-xs truncate" title="' + escapeHTML(value) + '">' + escapeHTML(value) + '</td>';
+        }).join('') + '</tr>';
+    }).join('');
+
+    empty.classList.toggle('hidden', rows.length !== 0);
+    summary.textContent = '共 ' + totalRows + ' 条，当前每页 ' + data.page_size + ' 条';
+    pageLabel.textContent = '第 ' + data.page + ' 页';
+    prevBtn.disabled = data.page <= 1;
+    var rowsOnPage = (data.rows || []).length;
+    nextBtn.disabled = rowsOnPage === 0 || rowsOnPage < data.page_size || (data.page * data.page_size) >= totalRows;
+    if (totalRows === 0) {
+        prevBtn.disabled = true;
+        nextBtn.disabled = true;
+    }
+}
+
+function loadResults(page) {
+    var errorEl = document.getElementById('results-error');
+    errorEl.classList.add('hidden');
+    errorEl.textContent = '';
+
+    var params = buildQueryString(page);
+    fetch('/api/tasks/' + taskID + '/results?' + params.toString(), {
+        headers: {'Accept': 'application/json'}
+    })
+    .then(function(res) {
+        if (!res.ok) {
+            return res.json().then(function(body) {
+                throw new Error(body.error || '查询失败');
+            });
+        }
+        return res.json();
+    })
+    .then(function(data) {
+        renderResults(data);
+    })
+    .catch(function(err) {
+        document.getElementById('results-table-head').innerHTML = '';
+        document.getElementById('results-table-body').innerHTML = '';
+        document.getElementById('results-empty-state').classList.remove('hidden');
+        errorEl.textContent = err.message || '查询失败';
+        errorEl.classList.remove('hidden');
+    });
+}
+
+function exportResults(format) {
+    var formData = new FormData(document.getElementById('results-query-form'));
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/api/tasks/' + taskID + '/results/export';
+    form.target = '_blank';
+
+    formData.forEach(function(value, key) {
+        if (key === 'page_size' || value === '') return;
+        var input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = value;
+        form.appendChild(input);
+    });
+
+    var formatInput = document.createElement('input');
+    formatInput.type = 'hidden';
+    formatInput.name = 'format';
+    formatInput.value = format;
+    form.appendChild(formatInput);
+
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+}
+
+document.getElementById('results-query-form').addEventListener('submit', function(event) {
+    event.preventDefault();
+    loadResults(1);
+});
+
+document.getElementById('page_size').addEventListener('change', function() {
+    loadResults(1);
+});
+
+applyURLState();
+loadResults(currentPage);
+</script>
+</body>
+</html>
+{{end}}
