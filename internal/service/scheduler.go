@@ -49,9 +49,12 @@ func (s *Scheduler) AddTask(task model.SyncTask) error {
 	if task.CronExpr == "" {
 		return nil
 	}
+	if _, err := ValidateAndNormalizeTaskSQLParams(&task); err != nil {
+		return err
+	}
 	taskID := task.ID
 	entryID, err := s.cron.AddFunc(task.CronExpr, func() {
-		if err := s.executor.Run(taskID); err != nil {
+		if err := s.executor.Run(taskID, "scheduler", nil); err != nil {
 			log.Printf("scheduled task %d failed: %v", taskID, err)
 		}
 	})

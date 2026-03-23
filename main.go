@@ -53,12 +53,18 @@ func main() {
 		TaskSvc: taskSvc,
 		Pool:    pool,
 	}
+	resultsSvc := &service.SQLResultsService{
+		TaskSvc: taskSvc,
+		DSSvc:   dsSvc,
+		Pool:    pool,
+	}
 	scheduler := service.NewScheduler(db, executor)
 	scheduler.Start()
 
 	taskHandler := &handler.TaskHandler{
 		TaskService:       taskSvc,
 		DataSourceService: dsSvc,
+		ResultsService:    resultsSvc,
 		Executor:          executor,
 		Scheduler:         scheduler,
 	}
@@ -114,6 +120,7 @@ func main() {
 		protected.GET("/tasks/new", taskHandler.CreateForm)
 		protected.POST("/tasks", taskHandler.Create)
 		protected.GET("/tasks/:id", taskHandler.Detail)
+		protected.GET("/tasks/:id/results", taskHandler.ResultsPage)
 		protected.GET("/tasks/:id/edit", taskHandler.EditForm)
 		protected.POST("/tasks/:id", taskHandler.Update)
 		protected.POST("/tasks/:id/delete", taskHandler.Delete)
@@ -123,6 +130,7 @@ func main() {
 
 		// Log routes
 		protected.GET("/logs", logHandler.List)
+		protected.GET("/logs/:id/download", logHandler.Download)
 	}
 
 	// API routes
@@ -135,6 +143,9 @@ func main() {
 		// Task API routes
 		api.GET("/tasks/:id/mappings", taskHandler.Mappings)
 		api.PUT("/tasks/:id/mappings", taskHandler.SaveMappings)
+		api.GET("/tasks/:id/run-params", taskHandler.RunParams)
+		api.GET("/tasks/:id/results", taskHandler.ResultsData)
+		api.POST("/tasks/:id/results/export", taskHandler.ResultsExport)
 		api.GET("/tasks/:id/progress", taskHandler.ProgressSnapshot)
 		api.GET("/tasks/:id/progress/stream", taskHandler.ProgressStream)
 		api.POST("/tasks/:id/verify", taskHandler.Verify)

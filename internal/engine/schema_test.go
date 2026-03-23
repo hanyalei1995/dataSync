@@ -79,8 +79,8 @@ func TestGenerateCreateSQL(t *testing.T) {
 	assert.Contains(t, sql, "users")
 	assert.Contains(t, sql, "PRIMARY KEY")
 	assert.Contains(t, sql, "INTEGER")      // INT → INTEGER
-	assert.Contains(t, sql, "VARCHAR(100)")  // preserved size
-	assert.Contains(t, sql, "NOT NULL")      // name is not nullable
+	assert.Contains(t, sql, "VARCHAR(100)") // preserved size
+	assert.Contains(t, sql, "NOT NULL")     // name is not nullable
 }
 
 func TestGenerateCreateSQLWithMappings(t *testing.T) {
@@ -112,8 +112,8 @@ func TestCompareSchema(t *testing.T) {
 		Columns: []ColumnSchema{
 			{Name: "id", Type: "INT", IsPrimary: true},
 			{Name: "name", Type: "VARCHAR(100)"},
-			{Name: "age", Type: "INT"},          // new column
-			{Name: "email", Type: "TEXT"},        // type changed from VARCHAR(200)
+			{Name: "age", Type: "INT"},    // new column
+			{Name: "email", Type: "TEXT"}, // type changed from VARCHAR(200)
 		},
 	}
 

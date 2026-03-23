@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-
 func TestBuildInsertSQL_MySQL(t *testing.T) {
 	sql := buildInsertSQL("mysql", "users", []string{"id", "name", "email"}, 2)
 	assert.Contains(t, sql, "INSERT IGNORE INTO")

@@ -58,7 +58,8 @@ func NewFileConnectorWithType(filePath, fileType string) (*FileConnector, error)
 	return &FileConnector{filePath: filePath, fileType: fileType}, nil
 }
 
-func (c *FileConnector) DBType() string { return c.fileType }
+func (c *FileConnector) DBType() string   { return c.fileType }
+func (c *FileConnector) FilePath() string { return c.filePath }
 
 func (c *FileConnector) Ping(_ context.Context) error {
 	_, err := os.Stat(c.filePath)

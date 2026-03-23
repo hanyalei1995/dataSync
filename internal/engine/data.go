@@ -23,10 +23,11 @@ type DataSyncOptions struct {
 	WriteStrategy string // "insert" or "upsert"
 	OnProgress    func(synced, total int64)
 	WhereClause   string
-	Concurrency   int    // 0 or 1 = serial (default); >1 = parallel shards
-	StartOffset   int64  // 断点续传起始 offset
+	Concurrency   int         // 0 or 1 = serial (default); >1 = parallel shards
+	StartOffset   int64       // 断点续传起始 offset
 	OnCheckpoint  func(int64) // 每批完成后回调，保存 checkpoint
-	SourceSQL     string // non-empty: run SQL import instead of table sync
+	SourceSQL     string      // non-empty: run SQL import instead of table sync
+	SourceSQLArgs []any
 }
 
 // SyncResult holds the outcome of a data sync operation.
@@ -454,14 +455,18 @@ func syncDataFromSQL(ctx context.Context, opts DataSyncOptions) (*SyncResult, er
 	}
 	rdb, ok := opts.Source.(rawDBer)
 	if !ok {
-		return nil, fmt.Errorf("sql_import requires a SQL data source (MySQL/PostgreSQL/ClickHouse/Doris); MongoDB and file sources are not supported")
+		return nil, fmt.Errorf("sql_import requires a SQL data source (MySQL/PostgreSQL/Oracle/ClickHouse/Doris); MongoDB and file sources are not supported")
 	}
 	db := rdb.RawDB()
+	dbType := opts.Source.DBType()
+
+	// Strip trailing semicolons — Oracle and others reject semicolons inside subqueries
+	srcSQL := strings.TrimRight(strings.TrimSpace(opts.SourceSQL), ";")
 
 	// Estimate total rows via subquery
-	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM (%s) _datasync_count", opts.SourceSQL)
+	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM (%s) datasync_cnt", srcSQL)
 	var totalRows int64
-	if err := db.QueryRowContext(ctx, countSQL).Scan(&totalRows); err != nil {
+	if err := db.QueryRowContext(ctx, countSQL, opts.SourceSQLArgs...).Scan(&totalRows); err != nil {
 		return nil, fmt.Errorf("count sql rows: %w", err)
 	}
 
@@ -495,7 +500,7 @@ func syncDataFromSQL(ctx context.Context, opts DataSyncOptions) (*SyncResult, er
 		default:
 		}
 
-		rows, cols, err := readSQLBatch(ctx, db, opts.SourceSQL, opts.BatchSize, offset)
+		rows, cols, err := readSQLBatch(ctx, db, dbType, srcSQL, opts.SourceSQLArgs, opts.BatchSize, offset)
 		if err != nil {
 			return nil, fmt.Errorf("read batch at offset %d: %w", offset, err)
 		}
@@ -528,23 +533,33 @@ func syncDataFromSQL(ctx context.Context, opts DataSyncOptions) (*SyncResult, er
 }
 
 // readSQLBatch executes a paginated query and returns the rows and column names for one batch.
-func readSQLBatch(ctx context.Context, db *sql.DB, query string, batchSize int, offset int64) ([]connector.Row, []string, error) {
-	batchSQL := fmt.Sprintf("SELECT * FROM (%s) _datasync_batch LIMIT %d OFFSET %d", query, batchSize, offset)
-	sqlRows, err := db.QueryContext(ctx, batchSQL)
+func readSQLBatch(ctx context.Context, db *sql.DB, dbType, query string, args []any, batchSize int, offset int64) ([]connector.Row, []string, error) {
+	batchSQL := buildPreviewPageSQL(dbType, query, batchSize, offset)
+	sqlRows, err := db.QueryContext(ctx, batchSQL, args...)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer sqlRows.Close()
 
-	cols, err := sqlRows.Columns()
+	allCols, err := sqlRows.Columns()
 	if err != nil {
 		return nil, nil, err
+	}
+	// Strip the internal pagination column injected for Oracle ROWNUM pagination.
+	cols := make([]string, 0, len(allCols))
+	rnIdx := -1
+	for i, c := range allCols {
+		if strings.EqualFold(c, "datasync_rn") {
+			rnIdx = i
+		} else {
+			cols = append(cols, c)
+		}
 	}
 
 	var rows []connector.Row
 	for sqlRows.Next() {
-		vals := make([]interface{}, len(cols))
-		ptrs := make([]interface{}, len(cols))
+		vals := make([]interface{}, len(allCols))
+		ptrs := make([]interface{}, len(allCols))
 		for i := range vals {
 			ptrs[i] = &vals[i]
 		}
@@ -552,7 +567,10 @@ func readSQLBatch(ctx context.Context, db *sql.DB, query string, batchSize int, 
 			return nil, nil, err
 		}
 		row := make(connector.Row, len(cols))
-		for i, col := range cols {
+		for i, col := range allCols {
+			if i == rnIdx {
+				continue
+			}
 			row[col] = vals[i]
 		}
 		rows = append(rows, row)

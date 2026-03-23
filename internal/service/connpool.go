@@ -19,6 +19,14 @@ func NewConnPool() *ConnPool {
 	return &ConnPool{conns: make(map[string]connector.Connector)}
 }
 
+// Put stores a connector for the given datasource key. Mainly used when a
+// caller already has an open connector they want the pool to reuse.
+func (p *ConnPool) Put(ds model.DataSource, conn connector.Connector) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.conns[dsKey(ds)] = conn
+}
+
 // Get 返回缓存的 Connector，不存在或 Ping 失败则重新创建。
 func (p *ConnPool) Get(ds model.DataSource) (connector.Connector, error) {
 	key := dsKey(ds)

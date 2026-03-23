@@ -25,10 +25,16 @@ func (s *TaskService) GetByID(id uint) (*model.SyncTask, error) {
 }
 
 func (s *TaskService) Create(task *model.SyncTask) error {
+	if _, err := ValidateAndNormalizeTaskSQLParams(task); err != nil {
+		return err
+	}
 	return s.DB.Create(task).Error
 }
 
 func (s *TaskService) Update(task *model.SyncTask) error {
+	if _, err := ValidateAndNormalizeTaskSQLParams(task); err != nil {
+		return err
+	}
 	return s.DB.Save(task).Error
 }
 
