@@ -12,10 +12,12 @@
     <style>
         .ts-wrapper.single .ts-control { border-radius: 0.5rem; border-color: #d1d5db; padding: 0.5rem 0.75rem; font-size: 0.875rem; }
         .ts-wrapper.single.focus .ts-control { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.2); }
-        .ts-dropdown { border-color: #d1d5db; border-radius: 0.5rem; font-size: 0.875rem; z-index: 9999 !important; position: absolute !important; }
+        .ts-dropdown { border-color: #d1d5db; border-radius: 0.5rem; font-size: 0.875rem; z-index: 9999 !important; position: absolute !important; background: #fff !important; overflow: hidden; box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18); }
+        .ts-dropdown-content { position: relative; z-index: 1; background: #fff; }
         .ts-dropdown .option.active { background-color: #eef2ff; color: #4338ca; }
         .ts-dropdown .option:hover { background-color: #f5f3ff; }
         .ts-wrapper { position: relative; }
+        .ts-wrapper.dropdown-active { z-index: 40; }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
@@ -34,7 +36,7 @@
     </div>
 </nav>
 
-<div class="max-w-3xl mx-auto px-4 py-8">
+<div class="max-w-5xl mx-auto px-4 py-8">
     <div class="flex items-center mb-6">
         <a href="/tasks" class="text-indigo-600 hover:underline mr-4">&larr; 返回</a>
         <h1 class="text-2xl font-bold text-gray-800">{{if .task}}编辑任务{{else}}新建任务{{end}}</h1>
@@ -50,6 +52,31 @@
                 <label class="block text-sm font-medium text-gray-700 mb-1">任务名称</label>
                 <input type="text" name="name" value="{{if .task}}{{.task.Name}}{{end}}" required
                     class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+            <input type="hidden" name="sql_params" id="sql_params_payload">
+            <textarea id="initial_sql_params" class="hidden">{{if and .task .task.SQLParams}}{{.task.SQLParams}}{{else}}[]{{end}}</textarea>
+
+            <!-- Sync Settings -->
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">同步类型</label>
+                    <select name="sync_type" id="sync_type" required
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="structure" {{if and .task (eq .task.SyncType "structure")}}selected{{end}}>结构同步</option>
+                        <option value="data" {{if and .task (eq .task.SyncType "data")}}selected{{end}}>数据同步</option>
+                        <option value="both" {{if and .task (eq .task.SyncType "both")}}selected{{end}}>全部同步</option>
+                        <option value="sql_import" {{if and .task (eq .task.SyncType "sql_import")}}selected{{end}}>SQL 导入</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">同步模式</label>
+                    <select name="sync_mode" id="sync_mode" required
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="manual" {{if and .task (eq .task.SyncMode "manual")}}selected{{end}}>手动</option>
+                        <option value="cron" {{if and .task (eq .task.SyncMode "cron")}}selected{{end}}>定时</option>
+                        <option value="realtime" {{if and .task (eq .task.SyncMode "realtime")}}selected{{end}}>实时</option>
+                    </select>
+                </div>
             </div>
 
             <!-- Source Section -->
@@ -147,12 +174,30 @@
                             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">{{if and .task .task.SourceSQL}}{{.task.SourceSQL}}{{end}}</textarea>
                         <p class="text-xs text-gray-400 mt-1">系统会自动分页执行：SELECT * FROM (your SQL) _t LIMIT ? OFFSET ?</p>
                     </div>
+                    <div id="sql_params_section" class="hidden border border-indigo-100 bg-indigo-50/40 rounded-lg p-4 space-y-3">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <h3 class="text-sm font-semibold text-gray-800">SQL 参数配置</h3>
+                                <p class="text-xs text-gray-500 mt-1">在 SQL 中使用 <code class="font-mono">{{"{{name}}"}}</code> 占位符。系统会自动识别参数，再配置类型、默认值和可选项。</p>
+                            </div>
+                            <button type="button" id="detect_sql_params_btn" class="shrink-0 px-3 py-1.5 text-xs font-medium text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition">
+                                重新识别参数
+                            </button>
+                        </div>
+                        <div id="sql_params_empty" class="text-sm text-gray-500 bg-white border border-dashed border-gray-300 rounded-lg px-3 py-4">
+                            当前 SQL 未检测到占位符参数
+                        </div>
+                        <div id="sql_params_rows" class="space-y-3"></div>
+                    </div>
                 </div>
             </fieldset>
 
             <!-- Target Section -->
-            <fieldset class="border border-gray-200 rounded-lg p-4">
+            <fieldset id="target_config_section" class="border border-gray-200 rounded-lg p-4">
                 <legend class="text-sm font-semibold text-gray-700 px-2">目标端配置</legend>
+                <div id="sql_import_target_hint" class="hidden p-3 bg-sky-50 border border-sky-200 rounded-lg text-sm text-sky-700 mb-2">
+                    SQL 导入模式下目标端<strong>可留空</strong>，系统将自动生成 CSV 文件（可从日志页下载）。留空则系统自动生成
+                </div>
                 <div class="space-y-3">
                     <div class="flex items-center gap-4">
                         <label class="flex items-center gap-1">
@@ -172,7 +217,7 @@
                                 class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
                                 <option value="">请选择</option>
                                 {{range .datasources}}
-                                <option value="{{.ID}}" {{if and $.task $.task.TargetDSID (eq .ID (deref $.task.TargetDSID))}}selected{{end}}>{{.Name}} ({{.DBType}})</option>
+                                <option value="{{.ID}}" data-dbtype="{{.DBType}}" {{if and $.task $.task.TargetDSID (eq .ID (deref $.task.TargetDSID))}}selected{{end}}>{{.Name}} ({{.DBType}})</option>
                                 {{end}}
                             </select>
                         </div>
@@ -220,12 +265,13 @@
                             </div>
                         </div>
                         <div id="target_file_fields" class="hidden">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">文件路径</label>
-                            <input type="text" name="target_host" placeholder="/data/output.csv" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">输出目录</label>
+                            <input type="text" name="target_host" placeholder="/data/exports" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                            <p class="text-xs text-gray-400 mt-1">文件名自动生成：任务名称-时间戳.csv/xlsx</p>
                         </div>
                     </div>
 
-                    <div>
+                    <div id="target_table_section">
                         <label class="block text-sm font-medium text-gray-700 mb-1">目标表</label>
                         <select name="target_table" id="target_table"
                             class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
@@ -235,33 +281,19 @@
                             {{end}}
                         </select>
                     </div>
+                    <div id="target_sheet_section" class="hidden">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            工作表名
+                            <span class="text-xs text-gray-400 ml-1">（Excel sheet 名，留空默认 Sheet1）</span>
+                        </label>
+                        <input type="text" name="target_sheet" placeholder="Sheet1"
+                            value="{{if and .task .task.TargetTable}}{{.task.TargetTable}}{{end}}"
+                            class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
                 </div>
             </fieldset>
 
-            <!-- Sync Settings -->
-            <div class="grid grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">同步类型</label>
-                    <select name="sync_type" required
-                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
-                        <option value="structure" {{if and .task (eq .task.SyncType "structure")}}selected{{end}}>结构同步</option>
-                        <option value="data" {{if and .task (eq .task.SyncType "data")}}selected{{end}}>数据同步</option>
-                        <option value="both" {{if and .task (eq .task.SyncType "both")}}selected{{end}}>全部同步</option>
-                        <option value="sql_import" {{if and .task (eq .task.SyncType "sql_import")}}selected{{end}}>SQL 导入</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">同步模式</label>
-                    <select name="sync_mode" id="sync_mode" required
-                        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
-                        <option value="manual" {{if and .task (eq .task.SyncMode "manual")}}selected{{end}}>手动</option>
-                        <option value="cron" {{if and .task (eq .task.SyncMode "cron")}}selected{{end}}>定时</option>
-                        <option value="realtime" {{if and .task (eq .task.SyncMode "realtime")}}selected{{end}}>实时</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-4">
+            <div id="concurrency_section" class="grid grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">并发分片数
                         <span class="text-xs text-gray-400 ml-1">（1=串行，2+=并发，大表提速）</span>
@@ -287,7 +319,7 @@
             </div>
 
             <!-- Advanced Filter Section -->
-            <div class="border border-gray-200 rounded-lg p-4 space-y-4">
+            <div id="advanced_filter_section" class="border border-gray-200 rounded-lg p-4 space-y-4">
                 <button type="button" id="toggle-advanced"
                     class="flex items-center justify-between w-full text-sm font-semibold text-gray-700">
                     <span>高级过滤（可选）</span>
@@ -373,8 +405,213 @@ document.querySelectorAll('input[name="target_mode"]').forEach(function(radio) {
 });
 
 // Toggle fields when sync_type changes
+var _currentTargetDBType = '';
+var _sqlParamState = parseInitialSQLParams();
+
+function parseInitialSQLParams() {
+    var el = document.getElementById('initial_sql_params');
+    if (!el || !el.value) return [];
+    try {
+        var parsed = JSON.parse(el.value);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+        return [];
+    }
+}
+
+function scanSQLParamNames(sql) {
+    var re = /\{\{([A-Za-z][A-Za-z0-9_]*)\}\}/g;
+    var names = [];
+    var seen = {};
+    var match;
+    while ((match = re.exec(sql || '')) !== null) {
+        if (!seen[match[1]]) {
+            seen[match[1]] = true;
+            names.push(match[1]);
+        }
+    }
+    return names;
+}
+
+function normalizeSQLParamDef(def, name, order) {
+    return {
+        name: name,
+        label: def && def.label ? def.label : name,
+        input_type: def && def.input_type ? def.input_type : 'text',
+        required: def && typeof def.required === 'boolean' ? def.required : true,
+        default_value: def && def.default_value ? def.default_value : '',
+        help_text: def && def.help_text ? def.help_text : '',
+        options: def && Array.isArray(def.options) ? def.options : [],
+        source: def && def.source ? def.source : 'detected',
+        order: def && def.order ? def.order : order
+    };
+}
+
+function escapeHTML(value) {
+    return String(value || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function formatSQLParamOptions(options) {
+    return (options || []).map(function(opt) {
+        var label = opt.label || opt.value || '';
+        var value = opt.value || '';
+        return label === value ? value : (label + ':' + value);
+    }).join('\n');
+}
+
+function parseSQLParamOptions(text) {
+    return String(text || '').split('\n').map(function(line) {
+        return line.trim();
+    }).filter(Boolean).map(function(line) {
+        var idx = line.indexOf(':');
+        if (idx === -1) {
+            return { label: line, value: line };
+        }
+        return {
+            label: line.slice(0, idx).trim(),
+            value: line.slice(idx + 1).trim()
+        };
+    }).filter(function(opt) {
+        return opt.value !== '';
+    });
+}
+
+function getSortedSQLParams() {
+    return _sqlParamState.slice().sort(function(a, b) {
+        return Number(a.order || 0) - Number(b.order || 0);
+    });
+}
+
+function syncSQLParamsPayload() {
+    var payload = document.getElementById('sql_params_payload');
+    if (!payload) return;
+    if (document.getElementById('sync_type').value !== 'sql_import') {
+        payload.value = '';
+        return;
+    }
+    payload.value = JSON.stringify(getSortedSQLParams());
+}
+
+function renderSQLParamSection() {
+    var isSQLImport = document.getElementById('sync_type').value === 'sql_import';
+    var section = document.getElementById('sql_params_section');
+    var empty = document.getElementById('sql_params_empty');
+    var rows = document.getElementById('sql_params_rows');
+    if (!section || !empty || !rows) return;
+
+    section.classList.toggle('hidden', !isSQLImport);
+    if (!isSQLImport) {
+        syncSQLParamsPayload();
+        return;
+    }
+
+    if (_sqlParamState.length === 0) {
+        empty.classList.remove('hidden');
+        rows.innerHTML = '';
+        syncSQLParamsPayload();
+        return;
+    }
+
+    empty.classList.add('hidden');
+    rows.innerHTML = getSortedSQLParams().map(function(def) {
+        var optionsHidden = def.input_type === 'select' ? '' : 'hidden';
+        return '' +
+            '<div data-param-name="' + escapeHTML(def.name) + '" class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">' +
+                '<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-12">' +
+                    '<div class="xl:col-span-2">' +
+                        '<label class="block text-xs font-medium uppercase tracking-wide text-gray-500">参数名</label>' +
+                        '<div class="mt-1 rounded border border-dashed border-gray-300 bg-gray-50 px-3 py-2 text-sm font-mono text-gray-700">' + escapeHTML(def.name) + '</div>' +
+                    '</div>' +
+                    '<div class="xl:col-span-2">' +
+                        '<label class="block text-xs font-medium uppercase tracking-wide text-gray-500">显示名</label>' +
+                        '<input data-field="label" type="text" value="' + escapeHTML(def.label) + '" class="mt-1 w-full border border-gray-300 rounded px-3 py-2 text-sm">' +
+                    '</div>' +
+                    '<div class="xl:col-span-2">' +
+                        '<label class="block text-xs font-medium uppercase tracking-wide text-gray-500">类型</label>' +
+                        '<select data-field="input_type" class="mt-1 w-full border border-gray-300 rounded px-3 py-2 text-sm">' +
+                            '<option value="text"' + (def.input_type === 'text' ? ' selected' : '') + '>文本</option>' +
+                            '<option value="textarea"' + (def.input_type === 'textarea' ? ' selected' : '') + '>长文本</option>' +
+                            '<option value="number"' + (def.input_type === 'number' ? ' selected' : '') + '>数字</option>' +
+                            '<option value="date"' + (def.input_type === 'date' ? ' selected' : '') + '>日期</option>' +
+                            '<option value="datetime"' + (def.input_type === 'datetime' ? ' selected' : '') + '>时间</option>' +
+                            '<option value="select"' + (def.input_type === 'select' ? ' selected' : '') + '>下拉</option>' +
+                        '</select>' +
+                    '</div>' +
+                    '<div class="xl:col-span-1">' +
+                        '<label class="block text-xs font-medium uppercase tracking-wide text-gray-500">必填</label>' +
+                        '<label class="mt-2 inline-flex items-center gap-2 text-sm text-gray-700"><input data-field="required" type="checkbox" class="h-4 w-4"' + (def.required ? ' checked' : '') + '>是</label>' +
+                    '</div>' +
+                    '<div class="xl:col-span-2">' +
+                        '<label class="block text-xs font-medium uppercase tracking-wide text-gray-500">默认值</label>' +
+                        '<input data-field="default_value" type="text" value="' + escapeHTML(def.default_value) + '" class="mt-1 w-full border border-gray-300 rounded px-3 py-2 text-sm">' +
+                    '</div>' +
+                    '<div class="xl:col-span-2">' +
+                        '<label class="block text-xs font-medium uppercase tracking-wide text-gray-500">说明</label>' +
+                        '<input data-field="help_text" type="text" value="' + escapeHTML(def.help_text) + '" class="mt-1 w-full border border-gray-300 rounded px-3 py-2 text-sm">' +
+                    '</div>' +
+                    '<div class="xl:col-span-1">' +
+                        '<label class="block text-xs font-medium uppercase tracking-wide text-gray-500">顺序</label>' +
+                        '<input data-field="order" type="number" min="1" value="' + escapeHTML(def.order) + '" class="mt-1 w-full border border-gray-300 rounded px-3 py-2 text-sm">' +
+                    '</div>' +
+                    '<div class="md:col-span-2 xl:col-span-12 ' + optionsHidden + '">' +
+                        '<label class="block text-xs font-medium uppercase tracking-wide text-gray-500">下拉选项</label>' +
+                        '<textarea data-field="options" rows="3" class="mt-1 w-full border border-gray-300 rounded px-3 py-2 text-xs font-mono" placeholder="显示名:值&#10;显示名2:值2">' + escapeHTML(formatSQLParamOptions(def.options)) + '</textarea>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+    }).join('');
+    syncSQLParamsPayload();
+}
+
+function syncSQLParamStateFromSQL() {
+    var sql = document.getElementById('source_sql').value || '';
+    var names = scanSQLParamNames(sql);
+    var byName = {};
+    _sqlParamState.forEach(function(def) {
+        byName[def.name] = def;
+    });
+    _sqlParamState = names.map(function(name, index) {
+        return normalizeSQLParamDef(byName[name], name, index + 1);
+    });
+    renderSQLParamSection();
+}
+
+function updateSQLParamField(event) {
+    var target = event.target;
+    var row = target.closest('[data-param-name]');
+    if (!row) return;
+    var name = row.getAttribute('data-param-name');
+    var field = target.getAttribute('data-field');
+    var def = _sqlParamState.find(function(item) { return item.name === name; });
+    if (!def || !field) return;
+
+    if (field === 'required') {
+        def.required = target.checked;
+    } else if (field === 'options') {
+        def.options = parseSQLParamOptions(target.value);
+    } else if (field === 'order') {
+        def.order = Number(target.value || 0);
+    } else {
+        def[field] = target.value;
+    }
+
+    if (field === 'input_type') {
+        if (def.input_type !== 'select') {
+            def.options = [];
+        }
+        renderSQLParamSection();
+        return;
+    }
+    syncSQLParamsPayload();
+}
+
 function updateSyncType() {
-    var t = document.querySelector('select[name="sync_type"]').value;
+    var t = document.getElementById('sync_type').value;
     var isSQLImport = (t === 'sql_import');
     document.getElementById('source_table_section').classList.toggle('hidden', isSQLImport);
     document.getElementById('source_sql_section').classList.toggle('hidden', !isSQLImport);
@@ -382,14 +619,35 @@ function updateSyncType() {
     // sql_import does not support realtime mode
     var modeSelect = document.getElementById('sync_mode');
     var realtimeOpt = modeSelect.querySelector('option[value="realtime"]');
-    if (isSQLImport) {
+    var cronOpt = modeSelect.querySelector('option[value="cron"]');
+    var isFileExport = isSQLImport && (_currentTargetDBType === 'csv' || _currentTargetDBType === 'excel');
+    if (isFileExport) {
+        // File exports: manual only
+        if (modeSelect.value !== 'manual') modeSelect.value = 'manual';
+        if (realtimeOpt) realtimeOpt.disabled = true;
+        if (cronOpt) cronOpt.disabled = true;
+        document.getElementById('cron_section').classList.add('hidden');
+    } else if (isSQLImport) {
         if (modeSelect.value === 'realtime') modeSelect.value = 'manual';
         if (realtimeOpt) realtimeOpt.disabled = true;
+        if (cronOpt) cronOpt.disabled = false;
     } else {
         if (realtimeOpt) realtimeOpt.disabled = false;
+        if (cronOpt) cronOpt.disabled = false;
     }
+
+    // Hide target config, concurrency, advanced filter for file-export tasks
+    var hideForFileExport = ['target_config_section', 'concurrency_section', 'advanced_filter_section'];
+    hideForFileExport.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', isFileExport);
+    });
+
+    document.getElementById('sql_import_target_hint').classList.toggle('hidden', !isSQLImport);
+
+    renderSQLParamSection();
 }
-document.querySelector('select[name="sync_type"]').addEventListener('change', updateSyncType);
+document.getElementById('sync_type').addEventListener('change', updateSyncType);
 // Run on page load to restore state (edit mode)
 updateSyncType();
 
@@ -398,18 +656,53 @@ document.getElementById('sync_mode').addEventListener('change', function() {
     document.getElementById('cron_section').classList.toggle('hidden', this.value !== 'cron');
 });
 
+function closeTomSelectDropdown(instance) {
+    if (!instance) return;
+    requestAnimationFrame(function() {
+        instance.close();
+        instance.blur();
+    });
+}
+
+function updateTargetForDBType(dbtype) {
+    _currentTargetDBType = dbtype;
+    var tableSection = document.getElementById('target_table_section');
+    var sheetSection = document.getElementById('target_sheet_section');
+    if (dbtype === 'csv' || dbtype === 'excel') {
+        if (tableSection) tableSection.classList.add('hidden');
+        if (sheetSection) sheetSection.classList.toggle('hidden', dbtype !== 'excel');
+    } else {
+        if (tableSection) tableSection.classList.remove('hidden');
+        if (sheetSection) sheetSection.classList.add('hidden');
+    }
+// Re-evaluate sync_type visibility rules now that target type is known
+    updateSyncType();
+}
+
 // Initialize Tom Select on datasource dropdowns
 var tsSrcDS = new TomSelect('#source_ds_id', {
     placeholder: '请选择数据源',
     allowEmptyOption: true,
     dropdownParent: 'body',
-    onChange: function(value) { loadTables(value, tsSrcTable); }
+    onChange: function(value) {
+        closeTomSelectDropdown(tsSrcDS);
+        loadTables(value, tsSrcTable);
+    }
 });
 var tsTgtDS = new TomSelect('#target_ds_id', {
     placeholder: '请选择数据源',
     allowEmptyOption: true,
     dropdownParent: 'body',
-    onChange: function(value) { loadTables(value, tsTgtTable); }
+    onChange: function(value) {
+        closeTomSelectDropdown(tsTgtDS);
+        var origSelect = document.getElementById('target_ds_id');
+        var selectedOpt = origSelect ? origSelect.querySelector('option[value="' + value + '"]') : null;
+        var dbtype = selectedOpt ? (selectedOpt.getAttribute('data-dbtype') || '') : '';
+        updateTargetForDBType(dbtype);
+        if (dbtype !== 'csv' && dbtype !== 'excel') {
+            loadTables(value, tsTgtTable);
+        }
+    }
 });
 
 // Initialize Tom Select on table dropdowns
@@ -417,18 +710,30 @@ var tsSrcTable = new TomSelect('#source_table', {
     placeholder: '请先选择数据源',
     allowEmptyOption: true,
     dropdownParent: 'body',
-    create: false
+    create: false,
+    onChange: function() {
+        closeTomSelectDropdown(tsSrcTable);
+    }
 });
 var tsTgtTable = new TomSelect('#target_table', {
     placeholder: '请先选择数据源',
     allowEmptyOption: true,
     dropdownParent: 'body',
-    create: false
+    create: false,
+    onChange: function() {
+        closeTomSelectDropdown(tsTgtTable);
+    }
 });
 
 // Load tables when datasource is selected
 function loadTables(dsId, tsInstance) {
-    if (!dsId) return;
+    if (!tsInstance) return;
+    if (!dsId) {
+        tsInstance.clearOptions();
+        tsInstance.addOption({value: '', text: '请选择表'});
+        tsInstance.refreshOptions(false);
+        return;
+    }
     var currentVal = tsInstance.getValue();
     fetch('/api/datasources/' + dsId + '/tables')
         .then(function(r) { return r.json(); })
@@ -453,11 +758,25 @@ function loadTables(dsId, tsInstance) {
 }
 
 // Auto-load tables on page load if datasource is pre-selected (edit mode)
+// Also initialise target dbtype so file-export rules apply immediately.
 (function() {
     var srcVal = tsSrcDS.getValue();
     var tgtVal = tsTgtDS.getValue();
     if (srcVal) loadTables(srcVal, tsSrcTable);
-    if (tgtVal) loadTables(tgtVal, tsTgtTable);
+    if (tgtVal) {
+        var origSelect = document.getElementById('target_ds_id');
+        var selectedOpt = origSelect ? origSelect.querySelector('option[value="' + tgtVal + '"]') : null;
+        var dbtype = selectedOpt ? (selectedOpt.getAttribute('data-dbtype') || '') : '';
+        if (dbtype === 'csv' || dbtype === 'excel') {
+            updateTargetForDBType(dbtype); // sets _currentTargetDBType and re-runs updateSyncType
+        } else {
+            loadTables(tgtVal, tsTgtTable);
+        }
+    }
+    closeTomSelectDropdown(tsSrcDS);
+    closeTomSelectDropdown(tsTgtDS);
+    closeTomSelectDropdown(tsSrcTable);
+    closeTomSelectDropdown(tsTgtTable);
 })();
 
 // Toggle advanced filter panel
@@ -506,6 +825,16 @@ if (enableWm) {
         }
     });
 }
+
+document.getElementById('detect_sql_params_btn').addEventListener('click', syncSQLParamStateFromSQL);
+document.getElementById('source_sql').addEventListener('change', syncSQLParamStateFromSQL);
+document.getElementById('sql_params_rows').addEventListener('input', updateSQLParamField);
+document.getElementById('sql_params_rows').addEventListener('change', updateSQLParamField);
+document.querySelector('form').addEventListener('submit', function() {
+    syncSQLParamStateFromSQL();
+    syncSQLParamsPayload();
+});
+syncSQLParamStateFromSQL();
 </script>
 </body>
 </html>
