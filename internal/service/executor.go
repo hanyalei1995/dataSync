@@ -9,6 +9,9 @@ import (
 	"datasync/internal/model"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -16,9 +19,41 @@ import (
 	"gorm.io/gorm"
 )
 
+// reUnsafeFilename matches characters unsafe for filenames, keeping ASCII
+// alphanumeric and common CJK unified ideographs.
+var reUnsafeFilename = regexp.MustCompile(`[^a-zA-Z0-9\x{4e00}-\x{9fff}\x{3400}-\x{4dbf}]+`)
+
+// exportFilePath derives a timestamped output path for file-export tasks.
+func exportFilePath(basePath, taskName, dbType string) string {
+	return exportFilePathAt(basePath, taskName, dbType, time.Now())
+}
+
+// exportFilePathAt is split out for deterministic tests.
+// basePath is the datasource Host field (treated as output directory; if it
+// has a file extension the parent directory is used instead).
+func exportFilePathAt(basePath, taskName, dbType string, now time.Time) string {
+	safe := strings.Trim(reUnsafeFilename.ReplaceAllString(taskName, "-"), "-")
+	if safe == "" {
+		safe = "export"
+	}
+	ts := now.Format("20060102-150405")
+	ext := ".csv"
+	if strings.ToLower(dbType) == "excel" {
+		ext = ".xlsx"
+	}
+	dir := basePath
+	if filepath.Ext(basePath) != "" {
+		dir = filepath.Dir(basePath)
+	}
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, safe+"-"+ts+ext)
+}
+
 // ProgressEvent holds a single progress update for a running task.
 type ProgressEvent struct {
-	Phase      string  `json:"phase"`    // connecting | structure | data | done | failed
+	Phase      string  `json:"phase"` // connecting | structure | data | done | failed
 	Message    string  `json:"message"`
 	RowsSynced int64   `json:"rows_synced"`
 	TotalRows  int64   `json:"total_rows"`
@@ -65,8 +100,8 @@ func connRawDB(c connector.Connector) *sql.DB {
 	return nil
 }
 
-// Run starts a sync task asynchronously.
-func (e *Executor) Run(taskID uint) error {
+// Run starts a sync task asynchronously. triggeredBy is the username or "scheduler".
+func (e *Executor) Run(taskID uint, triggeredBy string, runParams map[string]string) error {
 	task, err := e.TaskSvc.GetByID(taskID)
 	if err != nil {
 		return fmt.Errorf("加载任务失败: %w", err)
@@ -155,9 +190,10 @@ func (e *Executor) Run(taskID uint) error {
 	// Create sync log
 	now := time.Now()
 	syncLog := model.SyncLog{
-		TaskID:    taskID,
-		StartTime: now,
-		Status:    "running",
+		TaskID:      taskID,
+		StartTime:   now,
+		Status:      "running",
+		TriggeredBy: triggeredBy,
 	}
 	if err := e.DB.Create(&syncLog).Error; err != nil {
 		return fmt.Errorf("创建日志记录失败: %w", err)
@@ -275,19 +311,50 @@ func (e *Executor) Run(taskID uint) error {
 			}
 		case "sql_import":
 			if task.SourceSQL == "" {
-				syncErr = fmt.Errorf("sql_import 任务的源 SQL 不能为空")
+				syncErr = fmt.Errorf("sql_import task: source SQL must not be empty")
 				break
 			}
+			paramDefs, perr := ParseEffectiveSQLParams(task)
+			if perr != nil {
+				syncErr = perr
+				break
+			}
+			sourceSQL := task.SourceSQL
+			var sourceSQLArgs []any
+			if len(paramDefs) > 0 {
+				resolvedValues, rerr := engine.ResolveSQLParamValues(paramDefs, runParams)
+				if rerr != nil {
+					syncErr = rerr
+					break
+				}
+				sourceSQL, sourceSQLArgs, syncErr = engine.CompileSQLTemplate(sourceDB.DBType(), task.SourceSQL, resolvedValues)
+				if syncErr != nil {
+					break
+				}
+			}
+			// For file targets, bypass the pool and create a fresh connector
+			// with a timestamped filename so each run produces a distinct file.
+			if targetDS.DBType == "csv" || targetDS.DBType == "excel" {
+				genPath := exportFilePath(targetDS.Host, task.Name, targetDS.DBType)
+				if fc, ferr := connector.NewFileConnectorWithType(genPath, strings.ToLower(targetDS.DBType)); ferr == nil {
+					targetDB = fc
+				}
+			}
 			e.emit(taskID, ProgressEvent{Phase: "data", Message: "正在执行 SQL 导入..."})
+			sqlImportTargetTable := task.TargetTable
+			if sqlImportTargetTable == "" && targetDB.DBType() == "excel" {
+				sqlImportTargetTable = "Sheet1"
+			}
 			opts := engine.DataSyncOptions{
-				Source:      sourceDB,
-				Target:      targetDB,
-				SourceSQL:   task.SourceSQL,
-				TargetTable: task.TargetTable,
-				BatchSize:   1000,
-				OnProgress:  makeOnProgress(),
-				Concurrency: 1,
-				StartOffset: task.CheckpointOffset,
+				Source:        sourceDB,
+				Target:        targetDB,
+				SourceSQL:     sourceSQL,
+				SourceSQLArgs: sourceSQLArgs,
+				TargetTable:   sqlImportTargetTable,
+				BatchSize:     1000,
+				OnProgress:    makeOnProgress(),
+				Concurrency:   1,
+				StartOffset:   task.CheckpointOffset,
 				OnCheckpoint: func(offset int64) {
 					e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).
 						Update("checkpoint_offset", offset)
@@ -320,6 +387,11 @@ func (e *Executor) Run(taskID uint) error {
 			taskStatus = "error"
 		} else {
 			logUpdate["status"] = "success"
+			// Record file path for downloadable file-export tasks
+			type filePather interface{ FilePath() string }
+			if fp, ok := targetDB.(filePather); ok {
+				logUpdate["file_path"] = fp.FilePath()
+			}
 		}
 		e.DB.Model(&model.SyncLog{}).Where("id = ?", syncLog.ID).Updates(logUpdate)
 		e.DB.Model(&model.SyncTask{}).Where("id = ?", taskID).Update("status", taskStatus)
