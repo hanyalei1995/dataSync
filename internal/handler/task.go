@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,6 +17,7 @@ import (
 type TaskHandler struct {
 	TaskService       *service.TaskService
 	DataSourceService *service.DataSourceService
+	ResultsService    *service.SQLResultsService
 	Executor          *service.Executor
 	Scheduler         *service.Scheduler
 }
@@ -34,11 +36,19 @@ func (h *TaskHandler) List(c *gin.Context) {
 		dsMap[ds.ID] = ds.Name
 	}
 
+	resultsEligibleIDs := make(map[uint]bool)
+	for _, t := range tasks {
+		if t.SyncType == "sql_import" {
+			resultsEligibleIDs[t.ID] = true
+		}
+	}
+
 	username, _ := c.Get("username")
 	c.HTML(http.StatusOK, "task_list", gin.H{
-		"tasks":    tasks,
-		"dsMap":    dsMap,
-		"username": username,
+		"tasks":              tasks,
+		"dsMap":              dsMap,
+		"username":           username,
+		"resultsEligibleIDs": resultsEligibleIDs,
 	})
 }
 
@@ -52,15 +62,20 @@ func (h *TaskHandler) CreateForm(c *gin.Context) {
 }
 
 func (h *TaskHandler) Create(c *gin.Context) {
+	targetTable := c.PostForm("target_table")
+	if targetTable == "" {
+		targetTable = c.PostForm("target_sheet")
+	}
 	task := &model.SyncTask{
-		Name:        c.PostForm("name"),
-		SourceTable: c.PostForm("source_table"),
-		TargetTable: c.PostForm("target_table"),
-		SyncType:    c.PostForm("sync_type"),
-		SyncMode:    c.PostForm("sync_mode"),
+		Name:            c.PostForm("name"),
+		SourceTable:     c.PostForm("source_table"),
+		TargetTable:     targetTable,
+		SyncType:        c.PostForm("sync_type"),
+		SyncMode:        c.PostForm("sync_mode"),
 		CronExpr:        c.PostForm("cron_expr"),
 		FilterCondition: c.PostForm("filter_condition"),
 		SourceSQL:       c.PostForm("source_sql"),
+		SQLParams:       c.PostForm("sql_params"),
 		WatermarkColumn: c.PostForm("watermark_column"),
 		WatermarkType:   c.PostForm("watermark_type"),
 		Concurrency: func() int {
@@ -180,12 +195,17 @@ func (h *TaskHandler) Update(c *gin.Context) {
 
 	task.Name = c.PostForm("name")
 	task.SourceTable = c.PostForm("source_table")
-	task.TargetTable = c.PostForm("target_table")
+	targetTable := c.PostForm("target_table")
+	if targetTable == "" {
+		targetTable = c.PostForm("target_sheet")
+	}
+	task.TargetTable = targetTable
 	task.SyncType = c.PostForm("sync_type")
 	task.SyncMode = c.PostForm("sync_mode")
 	task.CronExpr = c.PostForm("cron_expr")
 	task.FilterCondition = c.PostForm("filter_condition")
 	task.SourceSQL = c.PostForm("source_sql")
+	task.SQLParams = c.PostForm("sql_params")
 	task.WatermarkColumn = c.PostForm("watermark_column")
 	task.WatermarkType = c.PostForm("watermark_type")
 	if n, err := strconv.Atoi(c.PostForm("concurrency")); err == nil {
@@ -320,16 +340,30 @@ func (h *TaskHandler) Detail(c *gin.Context) {
 		targetName = "临时连接"
 	}
 
+	// Find the most recent successful log with a downloadable file
+	var latestFilePath string
+	var latestFileLogID uint
+	for _, l := range logs {
+		if l.Status == "success" && l.FilePath != "" {
+			latestFilePath = l.FilePath
+			latestFileLogID = l.ID
+			break
+		}
+	}
+
 	username, _ := c.Get("username")
 	c.HTML(http.StatusOK, "task_detail", gin.H{
-		"task":       task,
-		"mappings":   mappings,
-		"logs":       logs,
-		"latestLog":  latestLog,
-		"sourceName": sourceName,
-		"targetName": targetName,
-		"username":   username,
-		"error":      c.Query("error"),
+		"task":             task,
+		"mappings":         mappings,
+		"logs":             logs,
+		"latestLog":        latestLog,
+		"sourceName":       sourceName,
+		"targetName":       targetName,
+		"username":         username,
+		"error":            c.Query("error"),
+		"latestFilePath":   latestFilePath,
+		"latestFileLogID":  latestFileLogID,
+		"resultsAvailable": eligibleForResultsPage(h.ResultsService, task.ID),
 	})
 }
 
@@ -389,8 +423,19 @@ func (h *TaskHandler) SaveMappings(c *gin.Context) {
 
 func (h *TaskHandler) Run(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-	isJSON := c.GetHeader("Accept") == "application/json" || c.Query("format") == "json"
-	if err := h.Executor.Run(uint(id)); err != nil {
+	isJSON := c.GetHeader("Accept") == "application/json" || c.Query("format") == "json" || strings.Contains(c.GetHeader("Content-Type"), "application/json")
+	var body struct {
+		Params map[string]string `json:"params"`
+	}
+	if strings.Contains(c.GetHeader("Content-Type"), "application/json") {
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	username, _ := c.Get("username")
+	triggeredBy, _ := username.(string)
+	if err := h.Executor.Run(uint(id), triggeredBy, body.Params); err != nil {
 		if isJSON {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -403,6 +448,25 @@ func (h *TaskHandler) Run(c *gin.Context) {
 		return
 	}
 	c.Redirect(http.StatusFound, "/tasks/"+c.Param("id"))
+}
+
+func (h *TaskHandler) RunParams(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	task, err := h.TaskService.GetByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	params, err := service.ParseEffectiveSQLParams(task)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"task_id":   task.ID,
+		"task_name": task.Name,
+		"params":    params,
+	})
 }
 
 func (h *TaskHandler) Stop(c *gin.Context) {

@@ -75,9 +75,16 @@
                     <td class="px-6 py-4 text-sm space-x-2">
                         <a href="/tasks/{{.ID}}" class="text-blue-600 hover:underline">详情</a>
                         <a href="/tasks/{{.ID}}/edit" class="text-indigo-600 hover:underline">编辑</a>
-                        <form method="POST" action="/tasks/{{.ID}}/run" class="inline">
-                            <button type="submit" class="text-green-600 hover:underline">运行</button>
-                        </form>
+                        {{if index $.resultsEligibleIDs .ID}}
+                        <a href="/tasks/{{.ID}}/results" class="text-sky-600 hover:underline">查看结果</a>
+                        {{end}}
+                        <button type="button"
+                            class="text-green-600 hover:underline run-task-btn"
+                            data-task-id="{{.ID}}"
+                            data-task-name="{{.Name}}"
+                            data-has-params="{{if eq .SyncType "sql_import"}}1{{else}}0{{end}}">
+                            运行
+                        </button>
                         <form method="POST" action="/tasks/{{.ID}}/delete" class="inline" onsubmit="return confirm('确定删除？')">
                             <button type="submit" class="text-red-600 hover:underline">删除</button>
                         </form>
@@ -93,11 +100,33 @@
     </div>
 </div>
 
+<div id="run-param-modal" class="hidden fixed inset-0 z-50">
+    <div class="absolute inset-0 bg-black/40" onclick="closeRunParamModal()"></div>
+    <div class="relative max-w-2xl mx-auto mt-24 bg-white rounded-xl shadow-xl p-6">
+        <div class="flex items-start justify-between gap-4 mb-4">
+            <div>
+                <h2 class="text-lg font-bold text-gray-900">运行任务</h2>
+                <p id="run-param-modal-subtitle" class="text-sm text-gray-500 mt-1"></p>
+            </div>
+            <button type="button" class="text-gray-400 hover:text-gray-600" onclick="closeRunParamModal()">✕</button>
+        </div>
+        <div id="run-param-error" class="hidden mb-3 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm"></div>
+        <form id="run-param-form" class="space-y-4">
+            <div id="run-param-fields" class="space-y-4"></div>
+            <div class="flex justify-end gap-3 pt-2">
+                <button type="button" class="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50" onclick="closeRunParamModal()">取消</button>
+                <button type="submit" class="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">执行</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 // Poll progress for all running tasks every 2 seconds
 var runningTaskIDs = [
     {{range .tasks}}{{if eq .Status "running"}}{{.ID}},{{end}}{{end}}
 ];
+var currentRunTaskID = 0;
 
 function pollProgress(taskID) {
     fetch('/api/tasks/' + taskID + '/progress')
@@ -136,6 +165,136 @@ if (runningTaskIDs.length > 0) {
         runningTaskIDs.forEach(function(id) { pollProgress(id); });
     }, 2000);
 }
+
+function submitRunWithoutParams(taskID) {
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/tasks/' + taskID + '/run';
+    document.body.appendChild(form);
+    form.submit();
+}
+
+function escapeHTML(value) {
+    return String(value || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function normalizeDateTimeValue(value) {
+    if (!value) return '';
+    if (value.indexOf('T') >= 0) return value.slice(0, 16);
+    if (value.indexOf(' ') >= 0) return value.replace(' ', 'T').slice(0, 16);
+    return value;
+}
+
+function buildRunParamField(param) {
+    var value = param.default_value || '';
+    var input = '';
+    if (param.input_type === 'textarea') {
+        input = '<textarea name="' + escapeHTML(param.name) + '" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">' + escapeHTML(value) + '</textarea>';
+    } else if (param.input_type === 'select') {
+        input = '<select name="' + escapeHTML(param.name) + '" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">' +
+            '<option value="">请选择</option>' +
+            (param.options || []).map(function(opt) {
+                var selected = opt.value === value ? ' selected' : '';
+                return '<option value="' + escapeHTML(opt.value) + '"' + selected + '>' + escapeHTML(opt.label || opt.value) + '</option>';
+            }).join('') +
+            '</select>';
+    } else {
+        var typeMap = {
+            text: 'text',
+            number: 'number',
+            date: 'date',
+            datetime: 'datetime-local'
+        };
+        var inputType = typeMap[param.input_type] || 'text';
+        if (inputType === 'datetime-local') {
+            value = normalizeDateTimeValue(value);
+        }
+        input = '<input type="' + inputType + '" name="' + escapeHTML(param.name) + '" value="' + escapeHTML(value) + '" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">';
+    }
+    return '' +
+        '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">' +
+                escapeHTML(param.label || param.name) +
+                (param.required ? '<span class="text-red-500 ml-1">*</span>' : '') +
+            '</label>' +
+            input +
+            (param.help_text ? '<p class="text-xs text-gray-400 mt-1">' + escapeHTML(param.help_text) + '</p>' : '') +
+        '</div>';
+}
+
+function closeRunParamModal() {
+    currentRunTaskID = 0;
+    document.getElementById('run-param-modal').classList.add('hidden');
+    document.getElementById('run-param-fields').innerHTML = '';
+    document.getElementById('run-param-error').classList.add('hidden');
+    document.getElementById('run-param-error').textContent = '';
+}
+
+function openRunParamModal(taskID, taskName) {
+    fetch('/api/tasks/' + taskID + '/run-params')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) throw new Error(data.error);
+            if (!data.params || data.params.length === 0) {
+                submitRunWithoutParams(taskID);
+                return;
+            }
+            currentRunTaskID = taskID;
+            document.getElementById('run-param-modal-subtitle').textContent = '任务：' + taskName;
+            document.getElementById('run-param-fields').innerHTML = data.params.map(buildRunParamField).join('');
+            document.getElementById('run-param-modal').classList.remove('hidden');
+        })
+        .catch(function(err) {
+            alert(err.message || '加载参数失败');
+        });
+}
+
+document.querySelectorAll('.run-task-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var taskID = btn.getAttribute('data-task-id');
+        if (btn.getAttribute('data-has-params') !== '1') {
+            submitRunWithoutParams(taskID);
+            return;
+        }
+        openRunParamModal(taskID, btn.getAttribute('data-task-name') || '');
+    });
+});
+
+document.getElementById('run-param-form').addEventListener('submit', function(event) {
+    event.preventDefault();
+    if (!currentRunTaskID) return;
+
+    var params = {};
+    new FormData(event.target).forEach(function(value, key) {
+        params[key] = value;
+    });
+
+    fetch('/tasks/' + currentRunTaskID + '/run?format=json', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        body: JSON.stringify({ params: params })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            window.location.reload();
+        })
+        .catch(function(err) {
+            var errorBox = document.getElementById('run-param-error');
+            errorBox.textContent = err.message || '执行失败';
+            errorBox.classList.remove('hidden');
+        });
+});
 </script>
 </body>
 </html>
